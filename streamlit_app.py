@@ -1129,6 +1129,31 @@ st.title("🏎️ Autonomous Parking: Q-Learning vs Double-Q")
 st.markdown("### 🚦 Real-Time Comparison Dashboard")
 
 # --- 1. SETUP SIDEBAR (CONTROLS) ---
+# In your sidebar, add this button:
+st.sidebar.markdown("### 🎯 Seed Optimizer")
+
+if st.sidebar.button("🔍 Find Best Seed", use_container_width=True):
+    st.sidebar.info("Analyzing 50 seeds... Check console for details")
+    
+    temp_env = env_builders[selected_level]()
+    optimal_seed = find_best_seed_for_level(
+        temp_env,
+        dq_tables.get(selected_level, {}),
+        q_tables.get(selected_level, {}),
+        selected_level,
+        num_tests=50
+    )
+    
+    st.session_state.optimal_seed = optimal_seed
+    st.sidebar.success(f"✅ Optimal Seed: {optimal_seed}")
+    
+    # Auto-apply the seed
+    st.rerun()
+
+# Use the optimal seed if it exists
+current_default = st.session_state.get('optimal_seed', seed_defaults[selected_level])
+seed_input = st.sidebar.number_input("Map Seed (ID)", min_value=0, value=current_default, step=1)
+
 st.sidebar.header("⚙️ Simulation Controls")
 
 # A. Action Buttons (Top of Sidebar for easy access)
