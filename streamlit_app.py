@@ -4,46 +4,13 @@ import time
 import numpy as np
 import random
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import pandas as pd
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-# ===========================================
-# CORE HELPER FUNCTIONS  ✅ MOVED HERE
-# ===========================================
-
-def count_turns(path):
-    if len(path) < 3: return 0
-    turns = 0
-    coords = [p[:2] for p in path]
-    for i in range(len(coords) - 2):
-        y1, x1 = coords[i]
-        y2, x2 = coords[i+1]
-        y3, x3 = coords[i+2]
-        if (y2-y1, x2-x1) != (y3-y2, x3-x2):
-            turns += 1
-    return turns
-
-
-def get_greedy_action(env, table, state_tuple):
-    if state_tuple not in table:
-        return np.random.randint(0, 4)
-
-    q_values = table[state_tuple]
-
-    if isinstance(q_values, dict):
-        return max(q_values, key=q_values.get)
-    elif isinstance(q_values, (np.ndarray, list)):
-        return int(np.argmax(q_values))
-
-    return np.random.randint(0, 4)
-
-
-# ===========================================
-# ENVIRONMENT
-# ===========================================
 
 class ParkingGrid:
-    def __init__(self, size=10, start=(0, 0), parking_spots=[(9, 9)],
+    def __init__(self, size=10, start=(0,0), parking_spots=[(9,9)],
                  obstacles=None, moving_humans=None,
                  move_penalty=-2, collision_penalty=-50, park_reward=200,
                  boundary_penalty=-20, reward_shaping=True, shaping_coeff=0.1,
@@ -63,36 +30,41 @@ class ParkingGrid:
         self.reward_shaping = reward_shaping
         self.shaping_coeff = shaping_coeff
         self.slip_prob = slip_prob
-
+        
         if not hasattr(self, "goal_candidates"):
             self.goal_candidates = []
 
         self.reset()
 
+    # --- NEW HELPER METHOD ---
     def _get_state(self):
+        """Returns the 4-tuple state: (Row, Col, Goal_Idx, Last_Action)"""
         return (self.state[0], self.state[1], self.goal_idx, self.prev_action)
 
     def reset(self):
+        # 1. Random Start
         if hasattr(self, "start_candidates") and self.start_candidates:
             self.start = random.choice(self.start_candidates)
-
+        
+        # 2. Random Goal
         self.goal_idx = 0
         if self.goal_candidates:
             self.goal_idx = random.randint(0, len(self.goal_candidates) - 1)
             self.parking_spots = {self.goal_candidates[self.goal_idx]}
-
+        
         self.state = self.start
         self.steps_taken = 0
-        self.prev_action = 4
+        self.prev_action = 4  # 4 = "Start/No Action"
         self.visit_count = {}
+        
+        # Call the helper
         return self._get_state()
 
     def _in_bounds(self, x, y):
         return 0 <= x < self.size and 0 <= y < self.size
 
     def _nearest_goal_distance(self, pos):
-        if not self.parking_spots:
-            return 0
+        if not self.parking_spots: return 0
         return min(abs(pos[0]-g[0]) + abs(pos[1]-g[1]) for g in self.parking_spots)
 
     def _update_moving_humans(self):
@@ -112,7 +84,7 @@ class ParkingGrid:
                     nx = x + h["dir"]
                 h["pos"] = (nx, y)
             new_positions.add(h["pos"])
-
+        
         self.obstacles = self.static_obstacles | new_positions
         if hasattr(self, "visual_objects"):
             self.visual_objects["human"] = new_positions
@@ -125,52 +97,84 @@ class ParkingGrid:
             action = np.random.randint(4)
 
         x, y = self.state
-        moves = {0:(-1,0),1:(1,0),2:(0,-1),3:(0,1)}
-        dx, dy = moves.get(action,(0,0))
-        nx, ny = x+dx, y+dy
+        if action == 0: nx, ny = x-1, y
+        elif action == 1: nx, ny = x+1, y
+        elif action == 2: nx, ny = x, y-1
+        elif action == 3: nx, ny = x, y+1
+        else: nx, ny = x, y
 
         info = {"is_collision": False, "is_boundary": False, "is_parked": False}
         done = False
-
+        
+        # 1. Boundary Check
         if not self._in_bounds(nx, ny):
             info["is_boundary"] = True
             self.prev_action = action
             return self._get_state(), self.boundary_penalty, done, info
 
-        if (nx, ny) in self.obstacles:
+        next_state = (nx, ny)
+
+        # 2. Collision Check
+        if next_state in self.obstacles:
             info["is_collision"] = True
             self.prev_action = action
             return self._get_state(), self.collision_penalty, done, info
 
-        if (nx, ny) in self.parking_spots:
-            self.state = (nx, ny)
+        # 3. Parked Check
+        if next_state in self.parking_spots:
+            self.state = next_state
             self.prev_action = action
             info["is_parked"] = True
             return self._get_state(), self.park_reward, True, info
 
+        # 4. Normal Move
         reward = self.move_penalty
-
+        
+        # ZIG-ZAG PENALTY
+        # If not start (4) and action changed, penalize!
         if self.prev_action != 4 and action != self.prev_action:
-            reward -= 10.0
-
+            reward -= 10.0 
+        
         self.prev_action = action
-        self.visit_count[(nx, ny)] = self.visit_count.get((nx, ny), 0) + 1
-        if self.visit_count[(nx, ny)] > 1:
+        
+        # Revisit Penalty
+        self.visit_count[next_state] = self.visit_count.get(next_state, 0) + 1
+        if self.visit_count[next_state] > 1:
             reward -= 1.5
 
-        if self.steps_taken > 20:
-            reward -= 1
-        if self.steps_taken > 50:
-            reward -= 2
+        # Anti-wandering
+        if self.steps_taken > 20: reward -= 1
+        if self.steps_taken > 50: reward -= 2
+
+        if hasattr(self, "visual_objects") and next_state in self.visual_objects.get("human_walkway", set()):
+            reward -= 0.5
 
         if self.reward_shaping:
             d0 = self._nearest_goal_distance(self.state)
-            d1 = self._nearest_goal_distance((nx, ny))
+            d1 = self._nearest_goal_distance(next_state)
             reward += self.shaping_coeff * (d0 - d1)
 
-        self.state = (nx, ny)
+        self.state = next_state
         return self._get_state(), reward, done, info
 
+    def get_state_space(self):
+        states = []
+        num_goals = len(self.goal_candidates) if self.goal_candidates else 1
+        
+        # 4D State Space: Row x Col x Goals x PreviousActions(5)
+        for i in range(self.size):
+            for j in range(self.size):
+                for g in range(num_goals):
+                    for a in range(5): 
+                        states.append((i, j, g, a))
+        return states
+    
+    def render_map(self):
+        grid = np.zeros((self.size, self.size), dtype=int)
+        for p in self.obstacles: grid[p] = -1
+        for p in self.parking_spots: grid[p] = 2
+        grid[self.start] = 3
+        return grid
 
 # ==========================================
 # 2. BUILDERS
@@ -682,235 +686,6 @@ def env_builder_hard():
 # ==========================================
 # 3. HELPER FUNCTIONS
 # ==========================================
-def count_turns(path):
-    if len(path) < 3: return 0
-    turns = 0
-    coords = [p[:2] for p in path]
-    for i in range(len(coords) - 2):
-        y1, x1 = coords[i]
-        y2, x2 = coords[i+1]
-        y3, x3 = coords[i+2]
-        if (y2-y1, x2-x1) != (y3-y2, x3-x2):
-            turns += 1
-    return turns
-
-def calculate_path_quality(path, rewards, infos, parked_idx):
-    """Compute basic quality metrics for one episode path"""
-    is_parked = 1 if parked_idx is not None else 0
-    steps = len(path)
-    turns = count_turns(path)
-    collisions = sum(1 for i in infos if i.get('is_collision', False))
-    boundaries = sum(1 for i in infos if i.get('is_boundary', False))
-    
-    return {
-        'is_parked': is_parked,
-        'steps': steps,
-        'turns': turns,
-        'collisions': collisions,
-        'boundaries': boundaries,
-        'total_reward': sum(rewards)
-    }
-
-def simulate_greedy_episode_with_seed(env, table, max_steps=500, seed=0):
-    """Simulate a full episode with a given seed"""
-    random.seed(seed)
-    np.random.seed(seed)
-    
-    state = env.reset()
-    path = [env.state]
-    rewards = []
-    infos = []
-    parked_idx = None
-    
-    for step in range(max_steps):
-        action = get_greedy_action(env, table, state)
-        state, reward, done, info = env.step(action)
-        
-        path.append(env.state)
-        rewards.append(reward)
-        infos.append(info)
-        
-        if done:
-            parked_idx = len(path) - 1
-            break
-    
-    return path, rewards, infos, parked_idx
-
-# 1. ADD AFTER IMPORTS - Pre-computed best seeds
-BEST_SEEDS = {
-    "easy": 8188,    # Will be auto-found on first run
-    "medium": 7380,   # Will be auto-found on first run
-    "hard": 2877      # Will be auto-found on first run
-}
-
-# 2. ENHANCED find_best_seed_for_level with stricter rules
-def find_best_seed_for_level(env, dq_table, q_table, level_name, num_tests=100):
-    """
-    Find seed where Double-Q demonstrates superiority with strict criteria:
-    - Both must park successfully
-    - Double-Q must be collision-free
-    - Double-Q must have fewer or equal turns than Q-Learning
-    - Double-Q should take fewer steps
-    - Heavily prioritize straight paths (minimize direction changes)
-    - Avoid zig-zag patterns (consecutive opposite directions)
-    """
-    best_seed = 0
-    best_composite_score = -float('inf')
-    found_valid = False
-    
-    best_stats = {}
-    
-    for seed in range(num_tests):
-        # Run both algorithms
-        path_dq, rew_dq, info_dq, parked_dq = simulate_greedy_episode_with_seed(
-            env, dq_table, max_steps=500, seed=seed
-        )
-        path_q, rew_q, info_q, parked_q = simulate_greedy_episode_with_seed(
-            env, q_table, max_steps=500, seed=seed
-        )
-        
-        # Compute quality metrics
-        dq_quality = calculate_path_quality(path_dq, rew_dq, info_dq, parked_dq)
-        q_quality = calculate_path_quality(path_q, rew_q, info_q, parked_q)
-        
-        # RULE 1: Both must park successfully
-        if not (dq_quality['is_parked'] and q_quality['is_parked']):
-            continue
-        
-        # RULE 2: Minimum steps threshold (avoid trivial paths)
-        min_steps = {'easy': 22, 'medium': 28, 'hard': 35}
-        if dq_quality['steps'] <= min_steps.get(level_name, 20):
-            continue
-        
-        # RULE 3: Double-Q must be collision-free
-        if dq_quality['collisions'] > 0:
-            continue
-        
-        # RULE 4: Double-Q must have fewer or equal turns
-        turn_advantage = q_quality['turns'] - dq_quality['turns']
-        if turn_advantage < 0:  # DQ has MORE turns - reject
-            continue
-        
-        # RULE 5: Double-Q should take fewer steps
-        step_advantage = q_quality['steps'] - dq_quality['steps']
-        if step_advantage <= 0:  # Not faster - reject
-            continue
-        
-        # RULE 6: Check for zig-zag patterns (consecutive opposite directions)
-        zigzag_penalty = check_zigzag_pattern(path_dq)
-        if zigzag_penalty > 2:  # Allow max 2 direction reversals
-            continue
-        
-        # RULE 7: Composite scoring - heavily favor straight paths
-        composite_score = (
-            turn_advantage * 150 +           # MASSIVE bonus for fewer turns
-            step_advantage * 20 +            # Good bonus for efficiency
-            -dq_quality['turns'] * 10 +      # Penalty for any turns
-            -zigzag_penalty * 50 +           # Heavy penalty for zig-zags
-            (100 if dq_quality['turns'] == 0 else 0)  # Bonus for perfect straight path
-        )
-        
-        if composite_score > best_composite_score:
-            best_composite_score = composite_score
-            best_seed = seed
-            found_valid = True
-            
-            best_stats = {
-                "dq_steps": dq_quality['steps'],
-                "q_steps": q_quality['steps'],
-                "step_adv": step_advantage,
-                "dq_turns": dq_quality['turns'],
-                "q_turns": q_quality['turns'],
-                "turn_adv": turn_advantage,
-                "zigzag": zigzag_penalty,
-                "score": composite_score
-            }
-    
-    if found_valid:
-        print(f"✅ Found best seed for {level_name}: {best_seed}")
-        print(f"   Stats: {best_stats}")
-        return best_seed
-    else:
-        print(f"⚠️ No ideal seed found for {level_name}, using fallback")
-        return find_fallback_seed(env, dq_table, q_table, level_name, num_tests)
-
-# 3. NEW FUNCTION: Check for zig-zag patterns
-def check_zigzag_pattern(path):
-    """
-    Detect zig-zag patterns (consecutive opposite directions)
-    Returns penalty score based on number of direction reversals
-    """
-    if len(path) < 3:
-        return 0
-    
-    zigzag_count = 0
-    coords = [p[:2] for p in path]
-    
-    for i in range(len(coords) - 2):
-        y1, x1 = coords[i]
-        y2, x2 = coords[i+1]
-        y3, x3 = coords[i+2]
-        
-        dir1 = (y2-y1, x2-x1)
-        dir2 = (y3-y2, x3-x2)
-        
-        # Check if directions are opposite (zig-zag)
-        if dir1 == (-dir2[0], -dir2[1]):
-            zigzag_count += 1
-    
-    return zigzag_count
-
-# 4. ENHANCED fallback with same strict rules
-def find_fallback_seed(env, dq_table, q_table, level_name, num_tests):
-    """
-    Fallback seed search - still prefer straight paths but allow equal steps
-    """
-    best_seed = 0
-    best_straightness_score = -float('inf')
-    best_found = False
-    
-    for seed in range(num_tests):
-        path_dq, rew_dq, info_dq, parked_dq = simulate_greedy_episode_with_seed(
-            env, dq_table, max_steps=500, seed=seed
-        )
-        path_q, rew_q, info_q, parked_q = simulate_greedy_episode_with_seed(
-            env, q_table, max_steps=500, seed=seed
-        )
-        
-        dq_quality = calculate_path_quality(path_dq, rew_dq, info_dq, parked_dq)
-        q_quality = calculate_path_quality(path_q, rew_q, info_q, parked_q)
-        
-        # Both must park successfully
-        if not (dq_quality['is_parked'] and q_quality['is_parked']):
-            continue
-        
-        # Avoid collisions
-        if dq_quality['collisions'] > 0:
-            continue
-        
-        # Check zig-zag
-        zigzag_penalty = check_zigzag_pattern(path_dq)
-        
-        # Allow equal steps, but heavily favor fewer turns
-        turn_diff = q_quality['turns'] - dq_quality['turns']
-        step_diff = q_quality['steps'] - dq_quality['steps']
-        
-        # Prefer straight paths and fewer turns
-        straightness_score = (
-            turn_diff * 80 +
-            step_diff * 10 +
-            -dq_quality['turns'] * 15 +
-            -zigzag_penalty * 30
-        )
-
-        if straightness_score > best_straightness_score:
-            best_straightness_score = straightness_score
-            best_seed = seed
-            best_found = True
-    
-    return best_seed if best_found else 0
-
-# 5. LOAD MODELS FUNCTION (MUST BE DEFINED BEFORE get_best_seeds)
 @st.cache_resource
 def load_models():
     filename = "parking_models.pkl"
@@ -920,91 +695,6 @@ def load_models():
         return data["q_tables"], data["dq_tables"]
     except FileNotFoundError:
         return None, None
-
-# 6. AUTO-FIND AND CACHE BEST SEEDS ON APP START
-@st.cache_resource
-def get_best_seeds():
-    """
-    Auto-find and cache best seeds for all levels
-    Only runs once per app session
-    """
-    q_tables, dq_tables = load_models()
-    if not q_tables or not dq_tables:
-        return BEST_SEEDS  # Return defaults if models not loaded
-    
-    env_builders = {
-        "easy": env_builder_easy,
-        "medium": env_builder_medium,
-        "hard": env_builder_hard
-    }
-    
-    optimized_seeds = {}
-    
-    for level in ["easy", "medium", "hard"]:
-        with st.spinner(f"🔍 Finding best seed for {level}..."):
-            env = env_builders[level]()
-            seed = find_best_seed_for_level(
-                env,
-                dq_tables.get(level, {}),
-                q_tables.get(level, {}),
-                level,
-                num_tests=100  # More tests for better results
-            )
-            optimized_seeds[level] = seed
-    
-    return optimized_seeds
-
-# 6. MODIFIED STREAMLIT SIDEBAR SETUP
-st.sidebar.header("⚙️ Simulation Controls")
-
-# A. Action Buttons
-col_btn1, col_btn2, col_btn3 = st.sidebar.columns(3)
-start_btn = col_btn1.button("▶ Start", type="primary")
-pause_btn = col_btn2.button("⏸ Pause")
-reset_btn = col_btn3.button("🔄 Reset")
-
-# B. Map Selection
-st.sidebar.divider()
-selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
-
-# C. Auto-load best seed for selected level
-if 'best_seeds' not in st.session_state:
-    st.session_state.best_seeds = get_best_seeds()
-
-current_best_seed = st.session_state.best_seeds.get(selected_level, 0)
-
-# D. Seed Display & Manual Override
-st.sidebar.divider()
-st.sidebar.markdown(f"### 🎯 Best Seed: **{current_best_seed}**")
-st.sidebar.caption("This seed demonstrates Double-Q superiority with straight paths")
-
-# Allow manual override
-use_custom = st.sidebar.checkbox("Use Custom Seed", value=False)
-if use_custom:
-    seed_input = st.sidebar.number_input("Custom Seed", min_value=0, value=current_best_seed, step=1)
-else:
-    seed_input = current_best_seed
-
-# E. Other Settings
-max_steps_input = st.sidebar.slider("Max Steps", 50, 500, 200)
-speed = st.sidebar.slider("Speed (Delay)", 0.0, 0.5, 0.0)
-
-# F. Optional: Manual Re-optimization Button
-st.sidebar.divider()
-if st.sidebar.button("🔄 Re-optimize All Seeds", use_container_width=True):
-    st.session_state.best_seeds = get_best_seeds()
-    st.rerun()
-
-# 7. Button Logic
-if start_btn:
-    st.session_state.run_active = True
-if pause_btn:
-    st.session_state.run_active = False
-if reset_btn:
-    st.session_state.current_seed = -1
-    st.session_state.run_active = False
-    st.rerun()
-
 
 q_tables, dq_tables = load_models()
 
@@ -1274,54 +964,17 @@ st.sidebar.header("⚙️ Simulation Controls")
 
 # A. Action Buttons (Top of Sidebar for easy access)
 col_btn1, col_btn2, col_btn3 = st.sidebar.columns(3)
-start_btn = col_btn1.button("▶ Start", type="primary")
+start_btn = col_btn1.button("▶ Start", type="primary") # Primary makes it red/highlighted
 pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
-# B. Settings - MUST COME FIRST
-st.sidebar.divider()
 seed_defaults = {
-    "easy": 8188,
-    "medium": 7380,
-    "hard": 2877
+    "easy": 8188,"medium": 7380,"hard": 2877
 }
-
-# Map string to builder functions (DEFINE EARLY)
-env_builders = {
-    "easy": env_builder_easy,
-    "medium": env_builder_medium,
-    "hard": env_builder_hard
-}
-
-# SELECT LEVEL FIRST (before using it)
+# B. Settings
+st.sidebar.divider()
 selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
-
-# --- SEED OPTIMIZER (comes after selected_level is defined) ---
-st.sidebar.divider()
-st.sidebar.markdown("### 🎯 Seed Optimizer")
-
-if st.sidebar.button("🔍 Find Best Seed", use_container_width=True):
-    with st.spinner(f"Analyzing 50 seeds for {selected_level}..."):
-        temp_env = env_builders[selected_level]()
-        optimal_seed = find_best_seed_for_level(
-            temp_env,
-            dq_tables.get(selected_level, {}),
-            q_tables.get(selected_level, {}),
-            selected_level,
-            num_tests=50
-        )
-        
-        st.session_state.optimal_seed = optimal_seed
-        st.sidebar.success(f"✅ Optimal Seed: {optimal_seed}")
-        
-        # Auto-apply the seed
-        st.rerun()
-
-# Use the optimal seed if it exists, otherwise use default
-current_default_seed = st.session_state.get('optimal_seed', seed_defaults[selected_level])
-
-# Seed input
-st.sidebar.divider()
+current_default_seed = seed_defaults[selected_level]
 seed_input = st.sidebar.number_input("Map Seed (ID)", min_value=0, value=current_default_seed, step=1)
 max_steps_input = st.sidebar.slider("Max Steps", 50, 500, 200)
 speed = st.sidebar.slider("Speed (Delay)", 0.0, 0.5, 0.0)
@@ -1333,7 +986,7 @@ if pause_btn:
     st.session_state.run_active = False
 if reset_btn:
     # Reset helper logic
-    st.session_state.current_seed = -1  # Force re-init
+    st.session_state.current_seed = -1 # Force re-init
     st.session_state.run_active = False
     st.rerun()
 
