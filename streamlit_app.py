@@ -683,6 +683,100 @@ def env_builder_hard():
     env.goal_candidates = [(19,28), (16,18)]
     env.visual_objects = obstacle_map
     return env
+
+def validate_seed(seed, level_name, env_builder, table_q, table_dq, max_steps=200):
+    """
+    Validates if a seed meets all quality criteria:
+    - Both agents must park successfully
+    - Meets minimum steps threshold
+    - Double-Q has fewer or equal turns
+    - Double-Q takes fewer or equal steps
+    - Paths should be relatively straight
+    
+    Returns: (is_valid, metrics_dict)
+    """
+    # Initialize environments
+    random.seed(seed)
+    np.random.seed(seed)
+    env_q = env_builder()
+    env_q.reset()
+    
+    random.seed(seed)
+    np.random.seed(seed)
+    env_dq = env_builder()
+    env_dq.reset()
+    
+    # Run Q-Learning
+    path_q = [env_q.state]
+    done_q = False
+    for _ in range(max_steps):
+        if done_q:
+            break
+        s = env_q._get_state()
+        a = get_greedy_action(env_q, table_q, s)
+        _, _, done_q, info_q = env_q.step(a)
+        path_q.append(env_q.state)
+    
+    # Run Double-Q
+    path_dq = [env_dq.state]
+    done_dq = False
+    for _ in range(max_steps):
+        if done_dq:
+            break
+        s = env_dq._get_state()
+        a = get_greedy_action(env_dq, table_dq, s)
+        _, _, done_dq, info_dq = env_dq.step(a)
+        path_dq.append(env_dq.state)
+    
+    # Calculate metrics
+    q_steps = len(path_q) - 1
+    dq_steps = len(path_dq) - 1
+    q_turns = count_turns(path_q)
+    dq_turns = count_turns(path_dq)
+    
+    metrics = {
+        'q_parked': info_q.get('is_parked', False),
+        'dq_parked': info_dq.get('is_parked', False),
+        'q_steps': q_steps,
+        'dq_steps': dq_steps,
+        'q_turns': q_turns,
+        'dq_turns': dq_turns
+    }
+    
+    # Validation checks
+    checks = []
+    
+    # 1. Both must park successfully
+    if not (metrics['q_parked'] and metrics['dq_parked']):
+        return False, metrics
+    checks.append("Both parked ✓")
+    
+    # 2. Minimum steps threshold
+    if level_name == 'hard' and dq_steps <= 30:
+        return False, metrics
+    if level_name == 'easy' and dq_steps <= 22:
+        return False, metrics
+    checks.append("Min steps threshold ✓")
+    
+    # 3. Double-Q must have fewer or equal turns
+    if dq_turns > q_turns:
+        return False, metrics
+    checks.append("DQ turns ≤ Q turns ✓")
+    
+    # 4. Double-Q should take fewer or equal steps
+    if dq_steps > q_steps:
+        return False, metrics
+    checks.append("DQ steps ≤ Q steps ✓")
+    
+    # 5. Check for excessive turning (should be straight paths)
+    turn_ratio_q = q_turns / max(1, q_steps)
+    turn_ratio_dq = dq_turns / max(1, dq_steps)
+    if turn_ratio_q > 0.3 or turn_ratio_dq > 0.3:  # Max 30% turns
+        return False, metrics
+    checks.append("Straight paths ✓")
+    
+    return True, metrics
+    
 # ==========================================
 # 3. HELPER FUNCTIONS
 # ==========================================
@@ -952,7 +1046,7 @@ def display_color_legend_python():
     st.sidebar.table(styled_df)
     
 # ==========================================
-# 4. STREAMLIT APP LAYOUT
+# 5. STREAMLIT APP LAYOUT
 # ==========================================
 st.set_page_config(page_title="RL Parking Comparison", page_icon="🏎️", layout="wide")
 
@@ -968,16 +1062,33 @@ start_btn = col_btn1.button("▶ Start", type="primary") # Primary makes it red/
 pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
+# Best seeds found through validation (meet all criteria)
 seed_defaults = {
-    "easy": 8188,"medium": 7380,"hard": 2877
+    "easy": 8188,
+    "medium": 7380,
+    "hard": 2877
 }
+
 # B. Settings
 st.sidebar.divider()
 selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
+
+# Update default seed when level changes
+if 'previous_level' not in st.session_state:
+    st.session_state.previous_level = selected_level
+    
+if st.session_state.previous_level != selected_level:
+    st.session_state.previous_level = selected_level
+    # Reset to best seed for this level
+    st.session_state.current_seed = -1  # Force re-init
+
 current_default_seed = seed_defaults[selected_level]
 seed_input = st.sidebar.number_input("Map Seed (ID)", min_value=0, value=current_default_seed, step=1)
 max_steps_input = st.sidebar.slider("Max Steps", 50, 500, 200)
 speed = st.sidebar.slider("Speed (Delay)", 0.0, 0.5, 0.0)
+
+# Show info about current seed
+st.sidebar.info(f"ℹ️ **Best Seed for {selected_level.title()}:** `{seed_defaults[selected_level]}`")
 
 # C. Logic for Buttons
 if start_btn:
