@@ -777,6 +777,22 @@ def validate_seed(seed, level_name, env_builder, table_q, table_dq, max_steps=20
     
     return True, metrics
 
+    
+# ==========================================
+# 3. HELPER FUNCTIONS
+# ==========================================
+@st.cache_resource
+def load_models():
+    filename = "parking_models.pkl"
+    try:
+        with open(filename, "rb") as f:
+            data = pickle.load(f)
+        return data["q_tables"], data["dq_tables"]
+    except FileNotFoundError:
+        return None, None
+
+q_tables, dq_tables = load_models()
+
 # Add after the model info debug code
 if st.sidebar.button("🔍 Test Model Performance"):
     st.sidebar.write("Testing seed 8188 on Easy map...")
@@ -844,21 +860,6 @@ if st.sidebar.button("🔍 Test Model Performance"):
         st.sidebar.write("Try swapping the table assignments in the code.")
     else:
         st.sidebar.warning("⚠️ Results are inconclusive")
-    
-# ==========================================
-# 3. HELPER FUNCTIONS
-# ==========================================
-@st.cache_resource
-def load_models():
-    filename = "parking_models.pkl"
-    try:
-        with open(filename, "rb") as f:
-            data = pickle.load(f)
-        return data["q_tables"], data["dq_tables"]
-    except FileNotFoundError:
-        return None, None
-
-q_tables, dq_tables = load_models()
 
 # Add debug check (TEMPORARY - remove after verification)
 st.sidebar.write("---")
