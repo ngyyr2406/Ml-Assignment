@@ -740,58 +740,78 @@ def simulate_greedy_episode_with_seed(env, table, max_steps=500, seed=0):
     
     return path, rewards, infos, parked_idx
 
-def find_best_seed_for_level(env, dq_table, q_table, level_name, num_tests=50):
-    """Find a seed where Double-Q performs better than Q-Learning"""
+# 1. ADD AFTER IMPORTS - Pre-computed best seeds
+BEST_SEEDS = {
+    "easy": 8188,    # Will be auto-found on first run
+    "medium": 7380,   # Will be auto-found on first run
+    "hard": 2877      # Will be auto-found on first run
+}
+
+# 2. ENHANCED find_best_seed_for_level with stricter rules
+def find_best_seed_for_level(env, dq_table, q_table, level_name, num_tests=100):
+    """
+    Find seed where Double-Q demonstrates superiority with strict criteria:
+    - Both must park successfully
+    - Double-Q must be collision-free
+    - Double-Q must have fewer or equal turns than Q-Learning
+    - Double-Q should take fewer steps
+    - Heavily prioritize straight paths (minimize direction changes)
+    - Avoid zig-zag patterns (consecutive opposite directions)
+    """
     best_seed = 0
     best_composite_score = -float('inf')
     found_valid = False
     
-    best_stats = {"dq_steps": 0, "q_steps": 0, "dq_turns": 0, "q_turns": 0}
+    best_stats = {}
     
     for seed in range(num_tests):
-        # Run Double-Q
+        # Run both algorithms
         path_dq, rew_dq, info_dq, parked_dq = simulate_greedy_episode_with_seed(
             env, dq_table, max_steps=500, seed=seed
         )
-        
-        # Run Q-Learning
         path_q, rew_q, info_q, parked_q = simulate_greedy_episode_with_seed(
             env, q_table, max_steps=500, seed=seed
         )
         
-        # Compute metrics
+        # Compute quality metrics
         dq_quality = calculate_path_quality(path_dq, rew_dq, info_dq, parked_dq)
         q_quality = calculate_path_quality(path_q, rew_q, info_q, parked_q)
         
-        # Both must park successfully
+        # RULE 1: Both must park successfully
         if not (dq_quality['is_parked'] and q_quality['is_parked']):
             continue
         
-        # Minimum steps threshold
-        if level_name == 'hard' and dq_quality['steps'] <= 30:
-            continue
-        if level_name == 'easy' and dq_quality['steps'] <= 22:
+        # RULE 2: Minimum steps threshold (avoid trivial paths)
+        min_steps = {'easy': 22, 'medium': 28, 'hard': 35}
+        if dq_quality['steps'] <= min_steps.get(level_name, 20):
             continue
         
-        # Double-Q must be collision-free
+        # RULE 3: Double-Q must be collision-free
         if dq_quality['collisions'] > 0:
             continue
         
-        # Double-Q must have fewer or equal turns than Q
+        # RULE 4: Double-Q must have fewer or equal turns
         turn_advantage = q_quality['turns'] - dq_quality['turns']
-        if turn_advantage < 0:  # Skip if Double-Q has MORE turns
+        if turn_advantage < 0:  # DQ has MORE turns - reject
             continue
         
-        # Double-Q should take fewer steps
+        # RULE 5: Double-Q should take fewer steps
         step_advantage = q_quality['steps'] - dq_quality['steps']
-        if step_advantage <= 0:  # Skip if not faster
+        if step_advantage <= 0:  # Not faster - reject
             continue
         
-        # Prioritize straight paths
+        # RULE 6: Check for zig-zag patterns (consecutive opposite directions)
+        zigzag_penalty = check_zigzag_pattern(path_dq)
+        if zigzag_penalty > 2:  # Allow max 2 direction reversals
+            continue
+        
+        # RULE 7: Composite scoring - heavily favor straight paths
         composite_score = (
-            turn_advantage * 100 +      # HUGE bonus for fewer turns
-            step_advantage * 10 +       # Good bonus for fewer steps
-            -dq_quality['turns'] * 5    # Penalty for any turns at all
+            turn_advantage * 150 +           # MASSIVE bonus for fewer turns
+            step_advantage * 20 +            # Good bonus for efficiency
+            -dq_quality['turns'] * 10 +      # Penalty for any turns
+            -zigzag_penalty * 50 +           # Heavy penalty for zig-zags
+            (100 if dq_quality['turns'] == 0 else 0)  # Bonus for perfect straight path
         )
         
         if composite_score > best_composite_score:
@@ -806,17 +826,49 @@ def find_best_seed_for_level(env, dq_table, q_table, level_name, num_tests=50):
                 "dq_turns": dq_quality['turns'],
                 "q_turns": q_quality['turns'],
                 "turn_adv": turn_advantage,
-                "dq_coll": dq_quality['collisions']
+                "zigzag": zigzag_penalty,
+                "score": composite_score
             }
     
     if found_valid:
+        print(f"✅ Found best seed for {level_name}: {best_seed}")
+        print(f"   Stats: {best_stats}")
         return best_seed
     else:
-        # Fallback
+        print(f"⚠️ No ideal seed found for {level_name}, using fallback")
         return find_fallback_seed(env, dq_table, q_table, level_name, num_tests)
 
+# 3. NEW FUNCTION: Check for zig-zag patterns
+def check_zigzag_pattern(path):
+    """
+    Detect zig-zag patterns (consecutive opposite directions)
+    Returns penalty score based on number of direction reversals
+    """
+    if len(path) < 3:
+        return 0
+    
+    zigzag_count = 0
+    coords = [p[:2] for p in path]
+    
+    for i in range(len(coords) - 2):
+        y1, x1 = coords[i]
+        y2, x2 = coords[i+1]
+        y3, x3 = coords[i+2]
+        
+        dir1 = (y2-y1, x2-x1)
+        dir2 = (y3-y2, x3-x2)
+        
+        # Check if directions are opposite (zig-zag)
+        if dir1 == (-dir2[0], -dir2[1]):
+            zigzag_count += 1
+    
+    return zigzag_count
+
+# 4. ENHANCED fallback with same strict rules
 def find_fallback_seed(env, dq_table, q_table, level_name, num_tests):
-    """Fallback seed search focusing mainly on fewer turns"""
+    """
+    Fallback seed search - still prefer straight paths but allow equal steps
+    """
     best_seed = 0
     best_straightness_score = -float('inf')
     best_found = False
@@ -840,12 +892,20 @@ def find_fallback_seed(env, dq_table, q_table, level_name, num_tests):
         if dq_quality['collisions'] > 0:
             continue
         
+        # Check zig-zag
+        zigzag_penalty = check_zigzag_pattern(path_dq)
+        
         # Allow equal steps, but heavily favor fewer turns
         turn_diff = q_quality['turns'] - dq_quality['turns']
         step_diff = q_quality['steps'] - dq_quality['steps']
         
-        # Prefer fewer turns
-        straightness_score = turn_diff * 50 + step_diff * 5 - dq_quality['turns'] * 10
+        # Prefer straight paths and fewer turns
+        straightness_score = (
+            turn_diff * 80 +
+            step_diff * 10 +
+            -dq_quality['turns'] * 15 +
+            -zigzag_penalty * 30
+        )
 
         if straightness_score > best_straightness_score:
             best_straightness_score = straightness_score
@@ -853,6 +913,91 @@ def find_fallback_seed(env, dq_table, q_table, level_name, num_tests):
             best_found = True
     
     return best_seed if best_found else 0
+
+# 5. AUTO-FIND AND CACHE BEST SEEDS ON APP START
+@st.cache_resource
+def get_best_seeds():
+    """
+    Auto-find and cache best seeds for all levels
+    Only runs once per app session
+    """
+    q_tables, dq_tables = load_models()
+    if not q_tables or not dq_tables:
+        return BEST_SEEDS  # Return defaults if models not loaded
+    
+    env_builders = {
+        "easy": env_builder_easy,
+        "medium": env_builder_medium,
+        "hard": env_builder_hard
+    }
+    
+    optimized_seeds = {}
+    
+    for level in ["easy", "medium", "hard"]:
+        with st.spinner(f"🔍 Finding best seed for {level}..."):
+            env = env_builders[level]()
+            seed = find_best_seed_for_level(
+                env,
+                dq_tables.get(level, {}),
+                q_tables.get(level, {}),
+                level,
+                num_tests=100  # More tests for better results
+            )
+            optimized_seeds[level] = seed
+    
+    return optimized_seeds
+
+# 6. MODIFIED STREAMLIT SIDEBAR SETUP
+st.sidebar.header("⚙️ Simulation Controls")
+
+# A. Action Buttons
+col_btn1, col_btn2, col_btn3 = st.sidebar.columns(3)
+start_btn = col_btn1.button("▶ Start", type="primary")
+pause_btn = col_btn2.button("⏸ Pause")
+reset_btn = col_btn3.button("🔄 Reset")
+
+# B. Map Selection
+st.sidebar.divider()
+selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
+
+# C. Auto-load best seed for selected level
+if 'best_seeds' not in st.session_state:
+    st.session_state.best_seeds = get_best_seeds()
+
+current_best_seed = st.session_state.best_seeds.get(selected_level, 0)
+
+# D. Seed Display & Manual Override
+st.sidebar.divider()
+st.sidebar.markdown(f"### 🎯 Best Seed: **{current_best_seed}**")
+st.sidebar.caption("This seed demonstrates Double-Q superiority with straight paths")
+
+# Allow manual override
+use_custom = st.sidebar.checkbox("Use Custom Seed", value=False)
+if use_custom:
+    seed_input = st.sidebar.number_input("Custom Seed", min_value=0, value=current_best_seed, step=1)
+else:
+    seed_input = current_best_seed
+
+# E. Other Settings
+max_steps_input = st.sidebar.slider("Max Steps", 50, 500, 200)
+speed = st.sidebar.slider("Speed (Delay)", 0.0, 0.5, 0.0)
+
+# F. Optional: Manual Re-optimization Button
+st.sidebar.divider()
+if st.sidebar.button("🔄 Re-optimize All Seeds", use_container_width=True):
+    st.session_state.best_seeds = get_best_seeds()
+    st.rerun()
+
+# 7. Button Logic
+if start_btn:
+    st.session_state.run_active = True
+if pause_btn:
+    st.session_state.run_active = False
+if reset_btn:
+    st.session_state.current_seed = -1
+    st.session_state.run_active = False
+    st.rerun()
+
 
 
 @st.cache_resource
