@@ -1374,10 +1374,6 @@ col1, col2 = st.columns(2)
 table_q = q_tables.get(selected_level, {})   # Q-Learning uses q_tables
 table_dq = dq_tables.get(selected_level, {}) # Double-Q uses dq_tables
 
-# Animation loop stays as:
-a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)  # Q-Learning: no constraints
-a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True) # Double-Q: with constraints
-
 # --- Display Metrics Table---
 def render_metrics_table(placeholder, path, info, steps):
     status = "🏎️ Driving..."
@@ -1425,23 +1421,9 @@ with col2:
 if st.session_state.run_active:
     while st.session_state.step_count < max_steps_input and st.session_state.run_active:
         
-        # Step Q-Learning (WITH constraints because table_q = dq_tables)
-        if not st.session_state.done_q:
-            s = st.session_state.env_q._get_state()
-            a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=True)  # ✅ CHANGED
-            _, _, d, i = st.session_state.env_q.step(a)
-            st.session_state.path_q.append(st.session_state.env_q.state)
-            st.session_state.done_q = d
-            st.session_state.info_q = i
-
-        # Step Double-Q (no constraints because table_dq = q_tables)
-        if not st.session_state.done_dq:
-            s = st.session_state.env_dq._get_state()
-            a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=False)  # ✅ CHANGED
-            _, _, d, i = st.session_state.env_dq.step(a)
-            st.session_state.path_dq.append(st.session_state.env_dq.state)
-            st.session_state.done_dq = d
-            st.session_state.info_dq = i
+        # Animation loop stays as:
+        a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)  # Q-Learning: no constraints
+        a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True) # Double-Q: with constraints
 
         st.session_state.step_count += 1
 
