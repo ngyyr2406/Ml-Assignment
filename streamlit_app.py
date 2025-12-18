@@ -792,6 +792,13 @@ def load_models():
 
 q_tables, dq_tables = load_models()
 
+# Add debug check (TEMPORARY - remove after verification)
+st.sidebar.write("---")
+st.sidebar.write("**Model Info:**")
+if q_tables and dq_tables:
+    st.sidebar.write(f"Q-tables loaded: {list(q_tables.keys())}")
+    st.sidebar.write(f"DQ-tables loaded: {list(dq_tables.keys())}")
+
 def count_turns(path):
     if len(path) < 3: return 0
     turns = 0
