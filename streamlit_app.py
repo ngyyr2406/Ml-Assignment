@@ -1208,6 +1208,18 @@ if 'env_q' not in st.session_state or \
         table_dq=table_dq_check,
         max_steps=max_steps_input
     )
+
+    # 🔹 LOCK THE GOAL/START FOR CONSISTENCY
+    # Re-initialize with same seed to get same random goal
+    random.seed(seed_input)
+    np.random.seed(seed_input)
+    temp_env = env_builders[selected_level]()
+    temp_env.reset()
+    
+    # Extract the locked configuration
+    locked_start = temp_env.start
+    locked_goal = list(temp_env.parking_spots)[0] if temp_env.parking_spots else None
+    locked_goal_idx = temp_env.goal_idx if hasattr(temp_env, 'goal_idx') else 0
     
     if not is_valid:
         st.warning(f"⚠️ Seed {seed_input} doesn't meet quality criteria for {selected_level} level!")
@@ -1215,18 +1227,46 @@ if 'env_q' not in st.session_state or \
                 f"Q-turns={metrics['q_turns']}, DQ-turns={metrics['dq_turns']}")
         st.info(f"💡 Using best seed: {seed_defaults[selected_level]}")
         seed_input = seed_defaults[selected_level]
+        
+        # Re-lock with best seed
+        random.seed(seed_input)
+        np.random.seed(seed_input)
+        temp_env = env_builders[selected_level]()
+        temp_env.reset()
+        locked_start = temp_env.start
+        locked_goal = list(temp_env.parking_spots)[0] if temp_env.parking_spots else None
+        locked_goal_idx = temp_env.goal_idx if hasattr(temp_env, 'goal_idx') else 0
     
-    # Init Q-Learning
+    # Init Q-Learning with LOCKED configuration
     random.seed(seed_input)
     np.random.seed(seed_input)
     st.session_state.env_q = env_builders[selected_level]()
+    st.session_state.env_q.start = locked_start  # 🔒 LOCK START
+    st.session_state.env_q.goal_idx = locked_goal_idx  # 🔒 LOCK GOAL INDEX
+    st.session_state.env_q.parking_spots = {locked_goal}  # 🔒 LOCK GOAL
     st.session_state.env_q.reset()
+    st.session_state.env_q.start = locked_start  # Lock again after reset
+    st.session_state.env_q.state = locked_start
+    st.session_state.env_q.parking_spots = {locked_goal}
 
-    # Init Double-Q (Same Seed)
+    # Init Double-Q with SAME LOCKED configuration
     random.seed(seed_input)
     np.random.seed(seed_input)
     st.session_state.env_dq = env_builders[selected_level]()
+    st.session_state.env_dq.start = locked_start  # 🔒 LOCK START
+    st.session_state.env_dq.goal_idx = locked_goal_idx  # 🔒 LOCK GOAL INDEX
+    st.session_state.env_dq.parking_spots = {locked_goal}  # 🔒 LOCK GOAL
     st.session_state.env_dq.reset()
+    st.session_state.env_dq.start = locked_start  # Lock again after reset
+    st.session_state.env_dq.state = locked_start
+    st.session_state.env_dq.parking_spots = {locked_goal}
+    
+    if not is_valid:
+        st.warning(f"⚠️ Seed {seed_input} doesn't meet quality criteria for {selected_level} level!")
+        st.info(f"📊 Results: Q-steps={metrics['q_steps']}, DQ-steps={metrics['dq_steps']}, "
+                f"Q-turns={metrics['q_turns']}, DQ-turns={metrics['dq_turns']}")
+        st.info(f"💡 Using best seed: {seed_defaults[selected_level]}")
+        seed_input = seed_defaults[selected_level]
 
     # Store Data
     st.session_state.path_q = [st.session_state.env_q.state]
