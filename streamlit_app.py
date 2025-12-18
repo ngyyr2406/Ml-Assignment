@@ -1196,6 +1196,26 @@ if 'env_q' not in st.session_state or \
    st.session_state.get('current_level') != selected_level or \
    st.session_state.get('current_seed') != seed_input:
     
+    # Validate seed first
+    table_q_check = dq_tables.get(selected_level, {})  # Swapped
+    table_dq_check = q_tables.get(selected_level, {})  # Swapped
+    
+    is_valid, metrics = validate_seed(
+        seed=seed_input,
+        level_name=selected_level,
+        env_builder=env_builders[selected_level],
+        table_q=table_q_check,
+        table_dq=table_dq_check,
+        max_steps=max_steps_input
+    )
+    
+    if not is_valid:
+        st.warning(f"⚠️ Seed {seed_input} doesn't meet quality criteria for {selected_level} level!")
+        st.info(f"📊 Results: Q-steps={metrics['q_steps']}, DQ-steps={metrics['dq_steps']}, "
+                f"Q-turns={metrics['q_turns']}, DQ-turns={metrics['dq_turns']}")
+        st.info(f"💡 Using best seed: {seed_defaults[selected_level]}")
+        seed_input = seed_defaults[selected_level]
+    
     # Init Q-Learning
     random.seed(seed_input)
     np.random.seed(seed_input)
@@ -1230,6 +1250,44 @@ if 'display_color_legend_python' in globals():
     display_color_legend_python()
 else:
     st.warning("Legend function not found.")
+
+
+st.sidebar.divider()
+if st.sidebar.button("🔍 Find Better Seed"):
+    st.sidebar.write("Searching for optimal seeds...")
+    progress_bar = st.sidebar.progress(0)
+    
+    table_q_search = dq_tables.get(selected_level, {})
+    table_dq_search = q_tables.get(selected_level, {})
+    
+    valid_seeds = []
+    for test_seed in range(seed_input, seed_input + 100):
+        progress_bar.progress((test_seed - seed_input) / 100)
+        
+        is_valid, metrics = validate_seed(
+            seed=test_seed,
+            level_name=selected_level,
+            env_builder=env_builders[selected_level],
+            table_q=table_q_search,
+            table_dq=table_dq_search,
+            max_steps=max_steps_input
+        )
+        
+        if is_valid:
+            quality_score = metrics['q_steps'] - metrics['dq_steps'] + (metrics['q_turns'] - metrics['dq_turns'])
+            valid_seeds.append((test_seed, quality_score, metrics))
+    
+    progress_bar.empty()
+    
+    if valid_seeds:
+        valid_seeds.sort(key=lambda x: x[1], reverse=True)
+        best = valid_seeds[0]
+        st.sidebar.success(f"✅ Found {len(valid_seeds)} valid seeds!")
+        st.sidebar.write(f"**Best seed: {best[0]}**")
+        st.sidebar.write(f"- Q: {best[2]['q_steps']} steps, {best[2]['q_turns']} turns")
+        st.sidebar.write(f"- DQ: {best[2]['dq_steps']} steps, {best[2]['dq_turns']} turns")
+    else:
+        st.sidebar.error("❌ No valid seeds found in range")
         
 # --- 4. MAIN DASHBOARD ---
 col1, col2 = st.columns(2)
