@@ -914,6 +914,7 @@ def find_fallback_seed(env, dq_table, q_table, level_name, num_tests):
     
     return best_seed if best_found else 0
 
+# 5. LOAD MODELS FUNCTION (MUST BE DEFINED BEFORE get_best_seeds)
 @st.cache_resource
 def load_models():
     filename = "parking_models.pkl"
