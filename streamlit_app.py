@@ -914,7 +914,17 @@ def find_fallback_seed(env, dq_table, q_table, level_name, num_tests):
     
     return best_seed if best_found else 0
 
-# 5. AUTO-FIND AND CACHE BEST SEEDS ON APP START
+@st.cache_resource
+def load_models():
+    filename = "parking_models.pkl"
+    try:
+        with open(filename, "rb") as f:
+            data = pickle.load(f)
+        return data["q_tables"], data["dq_tables"]
+    except FileNotFoundError:
+        return None, None
+
+# 6. AUTO-FIND AND CACHE BEST SEEDS ON APP START
 @st.cache_resource
 def get_best_seeds():
     """
@@ -998,17 +1008,6 @@ if reset_btn:
     st.session_state.run_active = False
     st.rerun()
 
-
-
-@st.cache_resource
-def load_models():
-    filename = "parking_models.pkl"
-    try:
-        with open(filename, "rb") as f:
-            data = pickle.load(f)
-        return data["q_tables"], data["dq_tables"]
-    except FileNotFoundError:
-        return None, None
 
 q_tables, dq_tables = load_models()
 
