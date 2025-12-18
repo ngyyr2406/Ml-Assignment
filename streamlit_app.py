@@ -805,7 +805,15 @@ def count_turns(path):
             turns += 1
     return turns
 
-def get_greedy_action(env, table, state_tuple):
+def get_greedy_action(env, table, state_tuple, is_double_q=False):
+    """
+    Select action based on Q-values with constraints for Double-Q
+    
+    Constraints for Double-Q:
+    - Prioritize straight paths (avoid zig-zag)
+    - Prefer actions that maintain direction
+    - Avoid unnecessary turns
+    """
     # 1. If state is not in the table, take a random action
     if state_tuple not in table:
         return np.random.randint(0, 4)
@@ -813,17 +821,47 @@ def get_greedy_action(env, table, state_tuple):
     # 2. Get Q-values
     q_values = table[state_tuple]
 
-    # 3. Handle different data types
+    # 3. Convert to array format
     if isinstance(q_values, dict):
-        # If it's a dictionary (Action -> Value)
-        return max(q_values, key=q_values.get)
-    
+        q_array = np.array([q_values.get(a, -np.inf) for a in range(4)])
     elif isinstance(q_values, (np.ndarray, list)):
-        # If it's a NumPy array or List (Index is Action)
-        return int(np.argmax(q_values))
+        q_array = np.array(q_values)
+    else:
+        return np.random.randint(0, 4)
+    
+    # 4. Apply Double-Q constraints
+    if is_double_q:
+        prev_action = state_tuple[3] if len(state_tuple) > 3 else 4
         
-    # Default fallback
-    return np.random.randint(0, 4)
+        # Get all actions with Q-values within 5% of max (near-optimal actions)
+        max_q = np.max(q_array)
+        threshold = max_q - abs(max_q) * 0.05  # 5% tolerance
+        candidate_actions = np.where(q_array >= threshold)[0]
+        
+        # CONSTRAINT: Prioritize straight paths (same direction as previous)
+        if prev_action < 4 and prev_action in candidate_actions:
+            # Strong preference for continuing straight
+            return int(prev_action)
+        
+        # CONSTRAINT: Avoid direction reversals (180-degree turns)
+        # 0=up, 1=down, 2=left, 3=right
+        opposite_actions = {0: 1, 1: 0, 2: 3, 3: 2}
+        if prev_action in opposite_actions:
+            opposite = opposite_actions[prev_action]
+            # Remove opposite direction from candidates
+            candidate_actions = candidate_actions[candidate_actions != opposite]
+        
+        # If no candidates left, use all actions
+        if len(candidate_actions) == 0:
+            candidate_actions = np.arange(4)
+        
+        # CONSTRAINT: Among remaining candidates, prefer the one with highest Q-value
+        # This ensures we take the most direct path
+        best_candidate = candidate_actions[np.argmax(q_array[candidate_actions])]
+        return int(best_candidate)
+    
+    # 5. For Q-Learning, just take the greedy action
+    return int(np.argmax(q_array))
 
 # Add after the model info debug code
 if st.sidebar.button("🔍 Test Model Performance"):
@@ -844,7 +882,7 @@ if st.sidebar.button("🔍 Test Model Performance"):
         if done_test:
             break
         s = test_env._get_state()
-        a = get_greedy_action(test_env, table_test_q, s)
+        a = get_greedy_action(test_env, table_test_q, s, is_double_q=False)
         _, _, done_test, info_test = test_env.step(a)
         path_test_q.append(test_env.state)
     
@@ -864,7 +902,7 @@ if st.sidebar.button("🔍 Test Model Performance"):
         if done_test:
             break
         s = test_env._get_state()
-        a = get_greedy_action(test_env, table_test_dq, s)
+        a = get_greedy_action(test_env, table_test_dq, s, is_double_q=True)
         _, _, done_test, info_test = test_env.step(a)
         path_test_dq.append(test_env.state)
     
@@ -1383,19 +1421,19 @@ with col2:
 if st.session_state.run_active:
     while st.session_state.step_count < max_steps_input and st.session_state.run_active:
         
-        # Step Q-Learning
+        # Step Q-Learning (no constraints)
         if not st.session_state.done_q:
             s = st.session_state.env_q._get_state()
-            a = get_greedy_action(st.session_state.env_q, table_q, s)
+            a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)
             _, _, d, i = st.session_state.env_q.step(a)
             st.session_state.path_q.append(st.session_state.env_q.state)
             st.session_state.done_q = d
             st.session_state.info_q = i
 
-        # Step Double-Q
+        # Step Double-Q (WITH constraints for straight paths)
         if not st.session_state.done_dq:
             s = st.session_state.env_dq._get_state()
-            a = get_greedy_action(st.session_state.env_dq, table_dq, s)
+            a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True)
             _, _, d, i = st.session_state.env_dq.step(a)
             st.session_state.path_dq.append(st.session_state.env_dq.state)
             st.session_state.done_dq = d
