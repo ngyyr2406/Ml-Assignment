@@ -1145,6 +1145,13 @@ seed_defaults = {
     "hard": 2877
 }
 
+# Map string to builder functions (DEFINE EARLY)
+env_builders = {
+    "easy": env_builder_easy,
+    "medium": env_builder_medium,
+    "hard": env_builder_hard
+}
+
 # SELECT LEVEL FIRST (before using it)
 selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
 
