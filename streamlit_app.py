@@ -683,101 +683,6 @@ def env_builder_hard():
     env.goal_candidates = [(19,28), (16,18)]
     env.visual_objects = obstacle_map
     return env
-
-def validate_seed(seed, level_name, env_builder, table_q, table_dq, max_steps=200):
-    """
-    Validates if a seed meets all quality criteria:
-    - Both agents must park successfully
-    - Meets minimum steps threshold
-    - Double-Q has fewer or equal turns
-    - Double-Q takes fewer or equal steps
-    - Paths should be relatively straight
-    
-    Returns: (is_valid, metrics_dict)
-    """
-    # Initialize environments
-    random.seed(seed)
-    np.random.seed(seed)
-    env_q = env_builder()
-    env_q.reset()
-    
-    random.seed(seed)
-    np.random.seed(seed)
-    env_dq = env_builder()
-    env_dq.reset()
-    
-    # Run Q-Learning
-    path_q = [env_q.state]
-    done_q = False
-    for _ in range(max_steps):
-        if done_q:
-            break
-        s = env_q._get_state()
-        a = get_greedy_action(env_q, table_q, s)
-        _, _, done_q, info_q = env_q.step(a)
-        path_q.append(env_q.state)
-    
-    # Run Double-Q
-    path_dq = [env_dq.state]
-    done_dq = False
-    for _ in range(max_steps):
-        if done_dq:
-            break
-        s = env_dq._get_state()
-        a = get_greedy_action(env_dq, table_dq, s)
-        _, _, done_dq, info_dq = env_dq.step(a)
-        path_dq.append(env_dq.state)
-    
-    # Calculate metrics
-    q_steps = len(path_q) - 1
-    dq_steps = len(path_dq) - 1
-    q_turns = count_turns(path_q)
-    dq_turns = count_turns(path_dq)
-    
-    metrics = {
-        'q_parked': info_q.get('is_parked', False),
-        'dq_parked': info_dq.get('is_parked', False),
-        'q_steps': q_steps,
-        'dq_steps': dq_steps,
-        'q_turns': q_turns,
-        'dq_turns': dq_turns
-    }
-    
-    # Validation checks
-    checks = []
-    
-    # 1. Both must park successfully
-    if not (metrics['q_parked'] and metrics['dq_parked']):
-        return False, metrics
-    checks.append("Both parked ✓")
-    
-    # 2. Minimum steps threshold
-    if level_name == 'hard' and dq_steps <= 30:
-        return False, metrics
-    if level_name == 'easy' and dq_steps <= 22:
-        return False, metrics
-    checks.append("Min steps threshold ✓")
-    
-    # 3. Double-Q must have fewer or equal turns
-    if dq_turns > q_turns:
-        return False, metrics
-    checks.append("DQ turns ≤ Q turns ✓")
-    
-    # 4. Double-Q should take fewer or equal steps
-    if dq_steps > q_steps:
-        return False, metrics
-    checks.append("DQ steps ≤ Q steps ✓")
-    
-    # 5. Check for excessive turning (should be straight paths)
-    turn_ratio_q = q_turns / max(1, q_steps)
-    turn_ratio_dq = dq_turns / max(1, dq_steps)
-    if turn_ratio_q > 0.3 or turn_ratio_dq > 0.3:  # Max 30% turns
-        return False, metrics
-    checks.append("Straight paths ✓")
-    
-    return True, metrics
-
-    
 # ==========================================
 # 3. HELPER FUNCTIONS
 # ==========================================
@@ -805,15 +710,7 @@ def count_turns(path):
             turns += 1
     return turns
 
-def get_greedy_action(env, table, state_tuple, is_double_q=False):
-    """
-    Select action based on Q-values with constraints for Double-Q
-    
-    Constraints for Double-Q:
-    - Prioritize straight paths (avoid zig-zag)
-    - Prefer actions that maintain direction
-    - Avoid unnecessary turns
-    """
+def get_greedy_action(env, table, state_tuple):
     # 1. If state is not in the table, take a random action
     if state_tuple not in table:
         return np.random.randint(0, 4)
@@ -821,128 +718,17 @@ def get_greedy_action(env, table, state_tuple, is_double_q=False):
     # 2. Get Q-values
     q_values = table[state_tuple]
 
-    # 3. Convert to array format
+    # 3. Handle different data types
     if isinstance(q_values, dict):
-        q_array = np.array([q_values.get(a, -np.inf) for a in range(4)])
+        # If it's a dictionary (Action -> Value)
+        return max(q_values, key=q_values.get)
+    
     elif isinstance(q_values, (np.ndarray, list)):
-        q_array = np.array(q_values)
-    else:
-        return np.random.randint(0, 4)
-    
-    # 4. Apply Double-Q constraints
-    if is_double_q:
-        prev_action = state_tuple[3] if len(state_tuple) > 3 else 4
+        # If it's a NumPy array or List (Index is Action)
+        return int(np.argmax(q_values))
         
-        # Get all actions with Q-values within 5% of max (near-optimal actions)
-        max_q = np.max(q_array)
-        threshold = max_q - abs(max_q) * 0.05  # 5% tolerance
-        candidate_actions = np.where(q_array >= threshold)[0]
-        
-        # CONSTRAINT: Prioritize straight paths (same direction as previous)
-        if prev_action < 4 and prev_action in candidate_actions:
-            # Strong preference for continuing straight
-            return int(prev_action)
-        
-        # CONSTRAINT: Avoid direction reversals (180-degree turns)
-        # 0=up, 1=down, 2=left, 3=right
-        opposite_actions = {0: 1, 1: 0, 2: 3, 3: 2}
-        if prev_action in opposite_actions:
-            opposite = opposite_actions[prev_action]
-            # Remove opposite direction from candidates
-            candidate_actions = candidate_actions[candidate_actions != opposite]
-        
-        # If no candidates left, use all actions
-        if len(candidate_actions) == 0:
-            candidate_actions = np.arange(4)
-        
-        # CONSTRAINT: Among remaining candidates, prefer the one with highest Q-value
-        # This ensures we take the most direct path
-        best_candidate = candidate_actions[np.argmax(q_array[candidate_actions])]
-        return int(best_candidate)
-    
-    # 5. For Q-Learning, just take the greedy action
-    return int(np.argmax(q_array))
-
-# Add after the model info debug code
-if st.sidebar.button("🔍 Test Model Performance"):
-    st.sidebar.write("Testing seed 8188 on Easy map...")
-    
-    # Test with current assignment
-    test_env = env_builder_easy()
-    random.seed(8188)
-    np.random.seed(8188)
-    test_env.reset()
-    
-    # Test Q-Learning
-    path_test_q = [test_env.state]
-    done_test = False
-    table_test_q = q_tables.get('easy', {})
-    
-    for _ in range(200):
-        if done_test:
-            break
-        s = test_env._get_state()
-        a = get_greedy_action(test_env, table_test_q, s, is_double_q=False)
-        _, _, done_test, info_test = test_env.step(a)
-        path_test_q.append(test_env.state)
-    
-    q_steps = len(path_test_q) - 1
-    q_turns = count_turns(path_test_q)
-    q_parked = info_test.get('is_parked', False)
-    
-    # Reset and test Double-Q
-    random.seed(8188)
-    np.random.seed(8188)
-    test_env.reset()
-    path_test_dq = [test_env.state]
-    done_test = False
-    table_test_dq = dq_tables.get('easy', {})
-    
-    for _ in range(200):
-        if done_test:
-            break
-        s = test_env._get_state()
-        a = get_greedy_action(test_env, table_test_dq, s, is_double_q=True)
-        _, _, done_test, info_test = test_env.step(a)
-        path_test_dq.append(test_env.state)
-    
-    dq_steps = len(path_test_dq) - 1
-    dq_turns = count_turns(path_test_dq)
-    dq_parked = info_test.get('is_parked', False)
-    
-    # Display results
-    st.sidebar.write("**Q-Learning:**")
-    st.sidebar.write(f"- Steps: {q_steps}")
-    st.sidebar.write(f"- Turns: {q_turns}")
-    st.sidebar.write(f"- Parked: {q_parked}")
-    
-    st.sidebar.write("**Double-Q:**")
-    st.sidebar.write(f"- Steps: {dq_steps}")
-    st.sidebar.write(f"- Turns: {dq_turns}")
-    st.sidebar.write(f"- Parked: {dq_parked}")
-    
-    # Analysis
-    st.sidebar.write("---")
-    if dq_steps < q_steps and dq_turns <= q_turns:
-        st.sidebar.success("✅ Models are CORRECT - Double-Q performs better!")
-    elif dq_steps > q_steps or dq_turns > q_turns:
-        st.sidebar.error("❌ Models might be SWAPPED - Double-Q performs worse!")
-        st.sidebar.write("Try swapping the table assignments in the code.")
-    else:
-        st.sidebar.warning("⚠️ Results are inconclusive")
-
-# Add debug check (TEMPORARY - remove after verification)
-st.sidebar.write("---")
-st.sidebar.write("**Model Info:**")
-if q_tables and dq_tables:
-    st.sidebar.write(f"Q-tables loaded: {list(q_tables.keys())}")
-    st.sidebar.write(f"DQ-tables loaded: {list(dq_tables.keys())}")
-
-# ADD THE TEST BUTTON CODE HERE
-
-st.sidebar.divider()
-
-
+    # Default fallback
+    return np.random.randint(0, 4)
 
 # --- ROTATED RENDER FUNCTION ---
 def render_grid(env, path, parked_idx=None, title_color="black"):
@@ -1166,7 +952,7 @@ def display_color_legend_python():
     st.sidebar.table(styled_df)
     
 # ==========================================
-# 5. STREAMLIT APP LAYOUT
+# 4. STREAMLIT APP LAYOUT
 # ==========================================
 st.set_page_config(page_title="RL Parking Comparison", page_icon="🏎️", layout="wide")
 
@@ -1182,33 +968,16 @@ start_btn = col_btn1.button("▶ Start", type="primary") # Primary makes it red/
 pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
-# Best seeds found through validation (meet all criteria)
 seed_defaults = {
-    "easy": 8188,
-    "medium": 7380,
-    "hard": 2877
+    "easy": 8188,"medium": 7380,"hard": 2877
 }
-
 # B. Settings
 st.sidebar.divider()
 selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
-
-# Update default seed when level changes
-if 'previous_level' not in st.session_state:
-    st.session_state.previous_level = selected_level
-    
-if st.session_state.previous_level != selected_level:
-    st.session_state.previous_level = selected_level
-    # Reset to best seed for this level
-    st.session_state.current_seed = -1  # Force re-init
-
 current_default_seed = seed_defaults[selected_level]
 seed_input = st.sidebar.number_input("Map Seed (ID)", min_value=0, value=current_default_seed, step=1)
 max_steps_input = st.sidebar.slider("Max Steps", 50, 500, 200)
 speed = st.sidebar.slider("Speed (Delay)", 0.0, 0.5, 0.0)
-
-# Show info about current seed
-st.sidebar.info(f"ℹ️ **Best Seed for {selected_level.title()}:** `{seed_defaults[selected_level]}`")
 
 # C. Logic for Buttons
 if start_btn:
@@ -1234,77 +1003,17 @@ if 'env_q' not in st.session_state or \
    st.session_state.get('current_level') != selected_level or \
    st.session_state.get('current_seed') != seed_input:
     
-    # Validate seed first
-    table_q_check = dq_tables.get(selected_level, {})  # Swapped
-    table_dq_check = q_tables.get(selected_level, {})  # Swapped
-    
-    is_valid, metrics = validate_seed(
-        seed=seed_input,
-        level_name=selected_level,
-        env_builder=env_builders[selected_level],
-        table_q=table_q_check,
-        table_dq=table_dq_check,
-        max_steps=max_steps_input
-    )
-
-    # 🔹 LOCK THE GOAL/START FOR CONSISTENCY
-    # Re-initialize with same seed to get same random goal
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    temp_env = env_builders[selected_level]()
-    temp_env.reset()
-    
-    # Extract the locked configuration
-    locked_start = temp_env.start
-    locked_goal = list(temp_env.parking_spots)[0] if temp_env.parking_spots else None
-    locked_goal_idx = temp_env.goal_idx if hasattr(temp_env, 'goal_idx') else 0
-    
-    if not is_valid:
-        st.warning(f"⚠️ Seed {seed_input} doesn't meet quality criteria for {selected_level} level!")
-        st.info(f"📊 Results: Q-steps={metrics['q_steps']}, DQ-steps={metrics['dq_steps']}, "
-                f"Q-turns={metrics['q_turns']}, DQ-turns={metrics['dq_turns']}")
-        st.info(f"💡 Using best seed: {seed_defaults[selected_level]}")
-        seed_input = seed_defaults[selected_level]
-        
-        # Re-lock with best seed
-        random.seed(seed_input)
-        np.random.seed(seed_input)
-        temp_env = env_builders[selected_level]()
-        temp_env.reset()
-        locked_start = temp_env.start
-        locked_goal = list(temp_env.parking_spots)[0] if temp_env.parking_spots else None
-        locked_goal_idx = temp_env.goal_idx if hasattr(temp_env, 'goal_idx') else 0
-    
-    # Init Q-Learning with LOCKED configuration
+    # Init Q-Learning
     random.seed(seed_input)
     np.random.seed(seed_input)
     st.session_state.env_q = env_builders[selected_level]()
-    st.session_state.env_q.start = locked_start  # 🔒 LOCK START
-    st.session_state.env_q.goal_idx = locked_goal_idx  # 🔒 LOCK GOAL INDEX
-    st.session_state.env_q.parking_spots = {locked_goal}  # 🔒 LOCK GOAL
     st.session_state.env_q.reset()
-    st.session_state.env_q.start = locked_start  # Lock again after reset
-    st.session_state.env_q.state = locked_start
-    st.session_state.env_q.parking_spots = {locked_goal}
 
-    # Init Double-Q with SAME LOCKED configuration
+    # Init Double-Q (Same Seed)
     random.seed(seed_input)
     np.random.seed(seed_input)
     st.session_state.env_dq = env_builders[selected_level]()
-    st.session_state.env_dq.start = locked_start  # 🔒 LOCK START
-    st.session_state.env_dq.goal_idx = locked_goal_idx  # 🔒 LOCK GOAL INDEX
-    st.session_state.env_dq.parking_spots = {locked_goal}  # 🔒 LOCK GOAL
     st.session_state.env_dq.reset()
-    st.session_state.env_dq.start = locked_start  # Lock again after reset
-    st.session_state.env_dq.state = locked_start
-    st.session_state.env_dq.parking_spots = {locked_goal}
-    
-    if not is_valid:
-        st.warning(f"⚠️ Seed {seed_input} doesn't meet quality criteria for {selected_level} level!")
-        st.info(f"📊 Results: Q-steps={metrics['q_steps']}, DQ-steps={metrics['dq_steps']}, "
-                f"Q-turns={metrics['q_turns']}, DQ-turns={metrics['dq_turns']}")
-        st.info(f"💡 Using best seed: {seed_defaults[selected_level]}")
-        seed_input = seed_defaults[selected_level]
 
     # Store Data
     st.session_state.path_q = [st.session_state.env_q.state]
@@ -1328,51 +1037,13 @@ if 'display_color_legend_python' in globals():
     display_color_legend_python()
 else:
     st.warning("Legend function not found.")
-
-
-st.sidebar.divider()
-if st.sidebar.button("🔍 Find Better Seed"):
-    st.sidebar.write("Searching for optimal seeds...")
-    progress_bar = st.sidebar.progress(0)
-    
-    table_q_search = dq_tables.get(selected_level, {})
-    table_dq_search = q_tables.get(selected_level, {})
-    
-    valid_seeds = []
-    for test_seed in range(seed_input, seed_input + 100):
-        progress_bar.progress((test_seed - seed_input) / 100)
-        
-        is_valid, metrics = validate_seed(
-            seed=test_seed,
-            level_name=selected_level,
-            env_builder=env_builders[selected_level],
-            table_q=table_q_search,
-            table_dq=table_dq_search,
-            max_steps=max_steps_input
-        )
-        
-        if is_valid:
-            quality_score = metrics['q_steps'] - metrics['dq_steps'] + (metrics['q_turns'] - metrics['dq_turns'])
-            valid_seeds.append((test_seed, quality_score, metrics))
-    
-    progress_bar.empty()
-    
-    if valid_seeds:
-        valid_seeds.sort(key=lambda x: x[1], reverse=True)
-        best = valid_seeds[0]
-        st.sidebar.success(f"✅ Found {len(valid_seeds)} valid seeds!")
-        st.sidebar.write(f"**Best seed: {best[0]}**")
-        st.sidebar.write(f"- Q: {best[2]['q_steps']} steps, {best[2]['q_turns']} turns")
-        st.sidebar.write(f"- DQ: {best[2]['dq_steps']} steps, {best[2]['dq_turns']} turns")
-    else:
-        st.sidebar.error("❌ No valid seeds found in range")
         
 # --- 4. MAIN DASHBOARD ---
 col1, col2 = st.columns(2)
 
 # Load Models
-table_q = q_tables.get(selected_level, {})   # Q-Learning uses q_tables
-table_dq = dq_tables.get(selected_level, {}) # Double-Q uses dq_tables
+table_q = q_tables.get(selected_level, {})
+table_dq = dq_tables.get(selected_level, {})
 
 # --- Display Metrics Table---
 def render_metrics_table(placeholder, path, info, steps):
@@ -1421,19 +1092,19 @@ with col2:
 if st.session_state.run_active:
     while st.session_state.step_count < max_steps_input and st.session_state.run_active:
         
-        # Step Q-Learning (no constraints)
+        # Step Q-Learning
         if not st.session_state.done_q:
             s = st.session_state.env_q._get_state()
-            a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)
+            a = get_greedy_action(st.session_state.env_q, table_q, s)
             _, _, d, i = st.session_state.env_q.step(a)
             st.session_state.path_q.append(st.session_state.env_q.state)
             st.session_state.done_q = d
             st.session_state.info_q = i
 
-        # Step Double-Q (WITH constraints for straight paths)
+        # Step Double-Q
         if not st.session_state.done_dq:
             s = st.session_state.env_dq._get_state()
-            a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True)
+            a = get_greedy_action(st.session_state.env_dq, table_dq, s)
             _, _, d, i = st.session_state.env_dq.step(a)
             st.session_state.path_dq.append(st.session_state.env_dq.state)
             st.session_state.done_dq = d
