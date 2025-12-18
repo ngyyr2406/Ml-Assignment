@@ -793,6 +793,38 @@ def load_models():
 
 q_tables, dq_tables = load_models()
 
+def count_turns(path):
+    if len(path) < 3: return 0
+    turns = 0
+    coords = [p[:2] for p in path]
+    for i in range(len(coords) - 2):
+        y1, x1 = coords[i]
+        y2, x2 = coords[i+1]
+        y3, x3 = coords[i+2]
+        if (y2-y1, x2-x1) != (y3-y2, x3-x2):
+            turns += 1
+    return turns
+
+def get_greedy_action(env, table, state_tuple):
+    # 1. If state is not in the table, take a random action
+    if state_tuple not in table:
+        return np.random.randint(0, 4)
+
+    # 2. Get Q-values
+    q_values = table[state_tuple]
+
+    # 3. Handle different data types
+    if isinstance(q_values, dict):
+        # If it's a dictionary (Action -> Value)
+        return max(q_values, key=q_values.get)
+    
+    elif isinstance(q_values, (np.ndarray, list)):
+        # If it's a NumPy array or List (Index is Action)
+        return int(np.argmax(q_values))
+        
+    # Default fallback
+    return np.random.randint(0, 4)
+
 # Add after the model info debug code
 if st.sidebar.button("🔍 Test Model Performance"):
     st.sidebar.write("Testing seed 8188 on Easy map...")
@@ -872,37 +904,7 @@ if q_tables and dq_tables:
 
 st.sidebar.divider()
 
-def count_turns(path):
-    if len(path) < 3: return 0
-    turns = 0
-    coords = [p[:2] for p in path]
-    for i in range(len(coords) - 2):
-        y1, x1 = coords[i]
-        y2, x2 = coords[i+1]
-        y3, x3 = coords[i+2]
-        if (y2-y1, x2-x1) != (y3-y2, x3-x2):
-            turns += 1
-    return turns
 
-def get_greedy_action(env, table, state_tuple):
-    # 1. If state is not in the table, take a random action
-    if state_tuple not in table:
-        return np.random.randint(0, 4)
-
-    # 2. Get Q-values
-    q_values = table[state_tuple]
-
-    # 3. Handle different data types
-    if isinstance(q_values, dict):
-        # If it's a dictionary (Action -> Value)
-        return max(q_values, key=q_values.get)
-    
-    elif isinstance(q_values, (np.ndarray, list)):
-        # If it's a NumPy array or List (Index is Action)
-        return int(np.argmax(q_values))
-        
-    # Default fallback
-    return np.random.randint(0, 4)
 
 # --- ROTATED RENDER FUNCTION ---
 def render_grid(env, path, parked_idx=None, title_color="black"):
