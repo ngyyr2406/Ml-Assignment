@@ -1371,8 +1371,12 @@ if st.sidebar.button("🔍 Find Better Seed"):
 col1, col2 = st.columns(2)
 
 # Load Models
-table_q = dq_tables.get(selected_level, {})  # Q-Learning now uses dq_tables
-table_dq = q_tables.get(selected_level, {})  # Double-Q now uses q_tables
+table_q = q_tables.get(selected_level, {})   # Q-Learning uses q_tables
+table_dq = dq_tables.get(selected_level, {}) # Double-Q uses dq_tables
+
+# Animation loop stays as:
+a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)  # Q-Learning: no constraints
+a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True) # Double-Q: with constraints
 
 # --- Display Metrics Table---
 def render_metrics_table(placeholder, path, info, steps):
