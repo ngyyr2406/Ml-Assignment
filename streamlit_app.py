@@ -1129,46 +1129,51 @@ st.title("🏎️ Autonomous Parking: Q-Learning vs Double-Q")
 st.markdown("### 🚦 Real-Time Comparison Dashboard")
 
 # --- 1. SETUP SIDEBAR (CONTROLS) ---
-# In your sidebar, add this button:
-st.sidebar.markdown("### 🎯 Seed Optimizer")
-
-if st.sidebar.button("🔍 Find Best Seed", use_container_width=True):
-    st.sidebar.info("Analyzing 50 seeds... Check console for details")
-    
-    temp_env = env_builders[selected_level]()
-    optimal_seed = find_best_seed_for_level(
-        temp_env,
-        dq_tables.get(selected_level, {}),
-        q_tables.get(selected_level, {}),
-        selected_level,
-        num_tests=50
-    )
-    
-    st.session_state.optimal_seed = optimal_seed
-    st.sidebar.success(f"✅ Optimal Seed: {optimal_seed}")
-    
-    # Auto-apply the seed
-    st.rerun()
-
-# Use the optimal seed if it exists
-current_default = st.session_state.get('optimal_seed', seed_defaults[selected_level])
-seed_input = st.sidebar.number_input("Map Seed (ID)", min_value=0, value=current_default, step=1)
-
 st.sidebar.header("⚙️ Simulation Controls")
 
 # A. Action Buttons (Top of Sidebar for easy access)
 col_btn1, col_btn2, col_btn3 = st.sidebar.columns(3)
-start_btn = col_btn1.button("▶ Start", type="primary") # Primary makes it red/highlighted
+start_btn = col_btn1.button("▶ Start", type="primary")
 pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
-seed_defaults = {
-    "easy": 8188,"medium": 7380,"hard": 2877
-}
-# B. Settings
+# B. Settings - MUST COME FIRST
 st.sidebar.divider()
+seed_defaults = {
+    "easy": 8188,
+    "medium": 7380,
+    "hard": 2877
+}
+
+# SELECT LEVEL FIRST (before using it)
 selected_level = st.sidebar.selectbox("Select Map Level", ["easy", "medium", "hard"])
-current_default_seed = seed_defaults[selected_level]
+
+# --- SEED OPTIMIZER (comes after selected_level is defined) ---
+st.sidebar.divider()
+st.sidebar.markdown("### 🎯 Seed Optimizer")
+
+if st.sidebar.button("🔍 Find Best Seed", use_container_width=True):
+    with st.spinner(f"Analyzing 50 seeds for {selected_level}..."):
+        temp_env = env_builders[selected_level]()
+        optimal_seed = find_best_seed_for_level(
+            temp_env,
+            dq_tables.get(selected_level, {}),
+            q_tables.get(selected_level, {}),
+            selected_level,
+            num_tests=50
+        )
+        
+        st.session_state.optimal_seed = optimal_seed
+        st.sidebar.success(f"✅ Optimal Seed: {optimal_seed}")
+        
+        # Auto-apply the seed
+        st.rerun()
+
+# Use the optimal seed if it exists, otherwise use default
+current_default_seed = st.session_state.get('optimal_seed', seed_defaults[selected_level])
+
+# Seed input
+st.sidebar.divider()
 seed_input = st.sidebar.number_input("Map Seed (ID)", min_value=0, value=current_default_seed, step=1)
 max_steps_input = st.sidebar.slider("Max Steps", 50, 500, 200)
 speed = st.sidebar.slider("Speed (Delay)", 0.0, 0.5, 0.0)
@@ -1180,7 +1185,7 @@ if pause_btn:
     st.session_state.run_active = False
 if reset_btn:
     # Reset helper logic
-    st.session_state.current_seed = -1 # Force re-init
+    st.session_state.current_seed = -1  # Force re-init
     st.session_state.run_active = False
     st.rerun()
 
