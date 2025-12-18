@@ -1421,9 +1421,23 @@ with col2:
 if st.session_state.run_active:
     while st.session_state.step_count < max_steps_input and st.session_state.run_active:
         
-        # Animation loop stays as:
-        a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)  # Q-Learning: no constraints
-        a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True) # Double-Q: with constraints
+        # Step Q-Learning (no constraints)
+        if not st.session_state.done_q:
+            s = st.session_state.env_q._get_state()
+            a = get_greedy_action(st.session_state.env_q, table_q, s, is_double_q=False)
+            _, _, d, i = st.session_state.env_q.step(a)
+            st.session_state.path_q.append(st.session_state.env_q.state)
+            st.session_state.done_q = d
+            st.session_state.info_q = i
+
+        # Step Double-Q (WITH constraints for straight paths)
+        if not st.session_state.done_dq:
+            s = st.session_state.env_dq._get_state()
+            a = get_greedy_action(st.session_state.env_dq, table_dq, s, is_double_q=True)
+            _, _, d, i = st.session_state.env_dq.step(a)
+            st.session_state.path_dq.append(st.session_state.env_dq.state)
+            st.session_state.done_dq = d
+            st.session_state.info_dq = i
 
         st.session_state.step_count += 1
 
