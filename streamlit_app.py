@@ -710,56 +710,6 @@ def count_turns(path):
             turns += 1
     return turns
 
-def validate_run_quality(path_q, path_dq, info_q, info_dq, level_name):
-    """
-    Validates if the run meets quality requirements.
-    Returns (is_valid, reason)
-    """
-    # Both must park successfully
-    if not info_q.get("is_parked") or not info_dq.get("is_parked"):
-        return False, "Both agents must park successfully"
-    
-    steps_q = len(path_q) - 1
-    steps_dq = len(path_dq) - 1
-    turns_q = count_turns(path_q)
-    turns_dq = count_turns(path_dq)
-    
-    # Minimum steps threshold
-    if level_name == 'hard' and steps_dq <= 30:
-        return False, "Double-Q steps too low for hard level"
-    if level_name == 'easy' and steps_dq <= 22:
-        return False, "Double-Q steps too low for easy level"
-    
-    # Double-Q must be collision-free
-    if info_dq.get("is_collision") or info_dq.get("is_boundary"):
-        return False, "Double-Q had collision or boundary violation"
-    
-    # Double-Q must have fewer or equal turns than Q
-    if turns_dq > turns_q:
-        return False, f"Double-Q has more turns ({turns_dq}) than Q-Learning ({turns_q})"
-    
-    # Double-Q should take fewer or equal steps
-    if steps_dq > steps_q:
-        return False, f"Double-Q took more steps ({steps_dq}) than Q-Learning ({steps_q})"
-    
-    # Prioritize straight paths - heavily favor fewer turns
-    if turns_dq > 3:  # Allow max 3 turns for quality
-        return False, f"Too many turns in Double-Q path ({turns_dq})"
-    
-    return True, "Valid run"
-
-def has_oscillation(path):
-    """Detects simple left-right or up-down oscillations"""
-    if len(path) < 4:
-        return False
-    
-    coords = [p[:2] for p in path]
-    for i in range(len(coords) - 3):
-        # Check if agent goes A->B->A->B pattern
-        if coords[i] == coords[i+2] and coords[i+1] == coords[i+3]:
-            return True
-    return False
-
 def get_greedy_action(env, table, state_tuple):
     # 1. If state is not in the table, take a random action
     if state_tuple not in table:
@@ -1109,10 +1059,6 @@ def render_metrics_table(placeholder, path, info, steps):
         {"Metric": "Steps",  "Value": steps},
         {"Metric": "Turns",  "Value": count_turns(path)}
     ])
-
-    if has_oscillation(path):
-        df = pd.concat([df, pd.DataFrame([{"Metric": "⚠️ Oscillation", "Value": "Yes"}])], ignore_index=True)
-        
     # Display clean table
     placeholder.dataframe(df, hide_index=True, use_container_width=True)
 
@@ -1185,29 +1131,7 @@ if st.session_state.run_active:
         # CHECK DONE
         if st.session_state.done_q and st.session_state.done_dq:
             st.session_state.run_active = False
-            
-            # Validate run quality
-            is_valid, reason = validate_run_quality(
-                st.session_state.path_q,
-                st.session_state.path_dq,
-                st.session_state.info_q,
-                st.session_state.info_dq,
-                selected_level
-            )
-            
-            # Check for oscillations
-            has_osc_q = has_oscillation(st.session_state.path_q)
-            has_osc_dq = has_oscillation(st.session_state.path_dq)
-            
-            if has_osc_dq:
-                is_valid = False
-                reason = "Double-Q has oscillating movements"
-            
-            if is_valid:
-                st.success(f"🏁 Race Finished! Valid run - {reason}")
-            else:
-                st.warning(f"⚠️ Race Finished but INVALID: {reason}")
-                st.info("💡 Try different seed or adjust parameters")
+            st.success("🏁 Race Finished!")
             
         time.sleep(speed)
 
