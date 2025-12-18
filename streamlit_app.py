@@ -776,6 +776,74 @@ def validate_seed(seed, level_name, env_builder, table_q, table_dq, max_steps=20
     checks.append("Straight paths ✓")
     
     return True, metrics
+
+# Add after the model info debug code
+if st.sidebar.button("🔍 Test Model Performance"):
+    st.sidebar.write("Testing seed 8188 on Easy map...")
+    
+    # Test with current assignment
+    test_env = env_builder_easy()
+    random.seed(8188)
+    np.random.seed(8188)
+    test_env.reset()
+    
+    # Test Q-Learning
+    path_test_q = [test_env.state]
+    done_test = False
+    table_test_q = q_tables.get('easy', {})
+    
+    for _ in range(200):
+        if done_test:
+            break
+        s = test_env._get_state()
+        a = get_greedy_action(test_env, table_test_q, s)
+        _, _, done_test, info_test = test_env.step(a)
+        path_test_q.append(test_env.state)
+    
+    q_steps = len(path_test_q) - 1
+    q_turns = count_turns(path_test_q)
+    q_parked = info_test.get('is_parked', False)
+    
+    # Reset and test Double-Q
+    random.seed(8188)
+    np.random.seed(8188)
+    test_env.reset()
+    path_test_dq = [test_env.state]
+    done_test = False
+    table_test_dq = dq_tables.get('easy', {})
+    
+    for _ in range(200):
+        if done_test:
+            break
+        s = test_env._get_state()
+        a = get_greedy_action(test_env, table_test_dq, s)
+        _, _, done_test, info_test = test_env.step(a)
+        path_test_dq.append(test_env.state)
+    
+    dq_steps = len(path_test_dq) - 1
+    dq_turns = count_turns(path_test_dq)
+    dq_parked = info_test.get('is_parked', False)
+    
+    # Display results
+    st.sidebar.write("**Q-Learning:**")
+    st.sidebar.write(f"- Steps: {q_steps}")
+    st.sidebar.write(f"- Turns: {q_turns}")
+    st.sidebar.write(f"- Parked: {q_parked}")
+    
+    st.sidebar.write("**Double-Q:**")
+    st.sidebar.write(f"- Steps: {dq_steps}")
+    st.sidebar.write(f"- Turns: {dq_turns}")
+    st.sidebar.write(f"- Parked: {dq_parked}")
+    
+    # Analysis
+    st.sidebar.write("---")
+    if dq_steps < q_steps and dq_turns <= q_turns:
+        st.sidebar.success("✅ Models are CORRECT - Double-Q performs better!")
+    elif dq_steps > q_steps or dq_turns > q_turns:
+        st.sidebar.error("❌ Models might be SWAPPED - Double-Q performs worse!")
+        st.sidebar.write("Try swapping the table assignments in the code.")
+    else:
+        st.sidebar.warning("⚠️ Results are inconclusive")
     
 # ==========================================
 # 3. HELPER FUNCTIONS
@@ -798,6 +866,10 @@ st.sidebar.write("**Model Info:**")
 if q_tables and dq_tables:
     st.sidebar.write(f"Q-tables loaded: {list(q_tables.keys())}")
     st.sidebar.write(f"DQ-tables loaded: {list(dq_tables.keys())}")
+
+# ADD THE TEST BUTTON CODE HERE
+
+st.sidebar.divider()
 
 def count_turns(path):
     if len(path) < 3: return 0
