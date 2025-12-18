@@ -4,13 +4,46 @@ import time
 import numpy as np
 import random
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import pandas as pd
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
+# ===========================================
+# CORE HELPER FUNCTIONS  ✅ MOVED HERE
+# ===========================================
+
+def count_turns(path):
+    if len(path) < 3: return 0
+    turns = 0
+    coords = [p[:2] for p in path]
+    for i in range(len(coords) - 2):
+        y1, x1 = coords[i]
+        y2, x2 = coords[i+1]
+        y3, x3 = coords[i+2]
+        if (y2-y1, x2-x1) != (y3-y2, x3-x2):
+            turns += 1
+    return turns
+
+
+def get_greedy_action(env, table, state_tuple):
+    if state_tuple not in table:
+        return np.random.randint(0, 4)
+
+    q_values = table[state_tuple]
+
+    if isinstance(q_values, dict):
+        return max(q_values, key=q_values.get)
+    elif isinstance(q_values, (np.ndarray, list)):
+        return int(np.argmax(q_values))
+
+    return np.random.randint(0, 4)
+
+
+# ===========================================
+# ENVIRONMENT
+# ===========================================
 
 class ParkingGrid:
-    def __init__(self, size=10, start=(0,0), parking_spots=[(9,9)],
+    def __init__(self, size=10, start=(0, 0), parking_spots=[(9, 9)],
                  obstacles=None, moving_humans=None,
                  move_penalty=-2, collision_penalty=-50, park_reward=200,
                  boundary_penalty=-20, reward_shaping=True, shaping_coeff=0.1,
@@ -30,41 +63,36 @@ class ParkingGrid:
         self.reward_shaping = reward_shaping
         self.shaping_coeff = shaping_coeff
         self.slip_prob = slip_prob
-        
+
         if not hasattr(self, "goal_candidates"):
             self.goal_candidates = []
 
         self.reset()
 
-    # --- NEW HELPER METHOD ---
     def _get_state(self):
-        """Returns the 4-tuple state: (Row, Col, Goal_Idx, Last_Action)"""
         return (self.state[0], self.state[1], self.goal_idx, self.prev_action)
 
     def reset(self):
-        # 1. Random Start
         if hasattr(self, "start_candidates") and self.start_candidates:
             self.start = random.choice(self.start_candidates)
-        
-        # 2. Random Goal
+
         self.goal_idx = 0
         if self.goal_candidates:
             self.goal_idx = random.randint(0, len(self.goal_candidates) - 1)
             self.parking_spots = {self.goal_candidates[self.goal_idx]}
-        
+
         self.state = self.start
         self.steps_taken = 0
-        self.prev_action = 4  # 4 = "Start/No Action"
+        self.prev_action = 4
         self.visit_count = {}
-        
-        # Call the helper
         return self._get_state()
 
     def _in_bounds(self, x, y):
         return 0 <= x < self.size and 0 <= y < self.size
 
     def _nearest_goal_distance(self, pos):
-        if not self.parking_spots: return 0
+        if not self.parking_spots:
+            return 0
         return min(abs(pos[0]-g[0]) + abs(pos[1]-g[1]) for g in self.parking_spots)
 
     def _update_moving_humans(self):
@@ -84,7 +112,7 @@ class ParkingGrid:
                     nx = x + h["dir"]
                 h["pos"] = (nx, y)
             new_positions.add(h["pos"])
-        
+
         self.obstacles = self.static_obstacles | new_positions
         if hasattr(self, "visual_objects"):
             self.visual_objects["human"] = new_positions
@@ -97,84 +125,52 @@ class ParkingGrid:
             action = np.random.randint(4)
 
         x, y = self.state
-        if action == 0: nx, ny = x-1, y
-        elif action == 1: nx, ny = x+1, y
-        elif action == 2: nx, ny = x, y-1
-        elif action == 3: nx, ny = x, y+1
-        else: nx, ny = x, y
+        moves = {0:(-1,0),1:(1,0),2:(0,-1),3:(0,1)}
+        dx, dy = moves.get(action,(0,0))
+        nx, ny = x+dx, y+dy
 
         info = {"is_collision": False, "is_boundary": False, "is_parked": False}
         done = False
-        
-        # 1. Boundary Check
+
         if not self._in_bounds(nx, ny):
             info["is_boundary"] = True
             self.prev_action = action
             return self._get_state(), self.boundary_penalty, done, info
 
-        next_state = (nx, ny)
-
-        # 2. Collision Check
-        if next_state in self.obstacles:
+        if (nx, ny) in self.obstacles:
             info["is_collision"] = True
             self.prev_action = action
             return self._get_state(), self.collision_penalty, done, info
 
-        # 3. Parked Check
-        if next_state in self.parking_spots:
-            self.state = next_state
+        if (nx, ny) in self.parking_spots:
+            self.state = (nx, ny)
             self.prev_action = action
             info["is_parked"] = True
             return self._get_state(), self.park_reward, True, info
 
-        # 4. Normal Move
         reward = self.move_penalty
-        
-        # ZIG-ZAG PENALTY
-        # If not start (4) and action changed, penalize!
+
         if self.prev_action != 4 and action != self.prev_action:
-            reward -= 10.0 
-        
+            reward -= 10.0
+
         self.prev_action = action
-        
-        # Revisit Penalty
-        self.visit_count[next_state] = self.visit_count.get(next_state, 0) + 1
-        if self.visit_count[next_state] > 1:
+        self.visit_count[(nx, ny)] = self.visit_count.get((nx, ny), 0) + 1
+        if self.visit_count[(nx, ny)] > 1:
             reward -= 1.5
 
-        # Anti-wandering
-        if self.steps_taken > 20: reward -= 1
-        if self.steps_taken > 50: reward -= 2
-
-        if hasattr(self, "visual_objects") and next_state in self.visual_objects.get("human_walkway", set()):
-            reward -= 0.5
+        if self.steps_taken > 20:
+            reward -= 1
+        if self.steps_taken > 50:
+            reward -= 2
 
         if self.reward_shaping:
             d0 = self._nearest_goal_distance(self.state)
-            d1 = self._nearest_goal_distance(next_state)
+            d1 = self._nearest_goal_distance((nx, ny))
             reward += self.shaping_coeff * (d0 - d1)
 
-        self.state = next_state
+        self.state = (nx, ny)
         return self._get_state(), reward, done, info
 
-    def get_state_space(self):
-        states = []
-        num_goals = len(self.goal_candidates) if self.goal_candidates else 1
-        
-        # 4D State Space: Row x Col x Goals x PreviousActions(5)
-        for i in range(self.size):
-            for j in range(self.size):
-                for g in range(num_goals):
-                    for a in range(5): 
-                        states.append((i, j, g, a))
-        return states
-    
-    def render_map(self):
-        grid = np.zeros((self.size, self.size), dtype=int)
-        for p in self.obstacles: grid[p] = -1
-        for p in self.parking_spots: grid[p] = 2
-        grid[self.start] = 3
-        return grid
 
 # ==========================================
 # 2. BUILDERS
