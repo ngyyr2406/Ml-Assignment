@@ -969,7 +969,7 @@ pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
 seed_defaults = {
-    "easy": 2925,"medium": 1262,"hard": 280
+    "easy": 2930,"medium": 1262,"hard": 280
 }
 # B. Settings
 st.sidebar.divider()
