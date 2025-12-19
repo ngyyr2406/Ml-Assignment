@@ -711,10 +711,6 @@ def count_turns(path):
     return turns
 
 def get_greedy_action(env, table, state_tuple):
-    """
-    Get greedy action from Q-table for given state.
-    Handles both dict and array-based Q-tables.
-    """
     # 1. If state is not in the table, take a random action
     if state_tuple not in table:
         return np.random.randint(0, 4)
@@ -725,8 +721,6 @@ def get_greedy_action(env, table, state_tuple):
     # 3. Handle different data types
     if isinstance(q_values, dict):
         # If it's a dictionary (Action -> Value)
-        if not q_values:  # Empty dict
-            return np.random.randint(0, 4)
         return max(q_values, key=q_values.get)
     
     elif isinstance(q_values, (np.ndarray, list)):
@@ -975,9 +969,7 @@ pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
 seed_defaults = {
-    "easy": 42,      # Double-Q takes fewer steps
-    "medium": 1234,  # Double-Q takes fewer steps
-    "hard": 567      # Double-Q takes fewer steps
+    "easy": 2925,"medium": 1262,"hard": 280
 }
 # B. Settings
 st.sidebar.divider()
@@ -1015,23 +1007,15 @@ if 'env_q' not in st.session_state or \
     random.seed(seed_input)
     np.random.seed(seed_input)
     st.session_state.env_q = env_builders[selected_level]()
-    
-    # CRITICAL: Reset with same seed to ensure identical initial state
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    initial_state_q = st.session_state.env_q.reset()
+    st.session_state.env_q.reset()
 
     # Init Double-Q (Same Seed)
     random.seed(seed_input)
     np.random.seed(seed_input)
     st.session_state.env_dq = env_builders[selected_level]()
-    
-    # CRITICAL: Reset with same seed
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    initial_state_dq = st.session_state.env_dq.reset()
+    st.session_state.env_dq.reset()
 
-    # Store Data - use the full state tuple, not just position
+    # Store Data
     st.session_state.path_q = [st.session_state.env_q.state]
     st.session_state.path_dq = [st.session_state.env_dq.state]
     st.session_state.info_q = {}
@@ -1040,47 +1024,6 @@ if 'env_q' not in st.session_state or \
     st.session_state.done_dq = False
     st.session_state.step_count = 0
     st.session_state.run_active = False
-    
-    # Store initial states for debugging
-    st.session_state.initial_state_q = initial_state_q
-    st.session_state.initial_state_dq = initial_state_dq
-    
-    st.session_state.current_level = selected_level
-    st.session_state.current_seed = seed_input
-    
-    # Init Q-Learning
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    st.session_state.env_q = env_builders[selected_level]()
-    
-    # CRITICAL: Reset with same seed to ensure identical initial state
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    initial_state_q = st.session_state.env_q.reset()
-
-    # Init Double-Q (Same Seed)
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    st.session_state.env_dq = env_builders[selected_level]()
-    
-    # CRITICAL: Reset with same seed
-    random.seed(seed_input)
-    np.random.seed(seed_input)
-    initial_state_dq = st.session_state.env_dq.reset()
-
-    # Store Data - use the full state tuple, not just position
-    st.session_state.path_q = [st.session_state.env_q.state]
-    st.session_state.path_dq = [st.session_state.env_dq.state]
-    st.session_state.info_q = {}
-    st.session_state.info_dq = {}
-    st.session_state.done_q = False
-    st.session_state.done_dq = False
-    st.session_state.step_count = 0
-    st.session_state.run_active = False
-    
-    # Store initial states for debugging
-    st.session_state.initial_state_q = initial_state_q
-    st.session_state.initial_state_dq = initial_state_dq
     
     st.session_state.current_level = selected_level
     st.session_state.current_seed = seed_input
@@ -1088,36 +1031,6 @@ if 'env_q' not in st.session_state or \
 # --- 3. DISPLAY LEGEND (IN EXPANDER) ---
                           
 st.sidebar.divider()  # Optional separator
-
-# Debug Info (Collapsible)
-with st.sidebar.expander("🔍 Debug Info", expanded=False):
-    if 'env_q' in st.session_state:
-        st.write("**Q-Learning:**")
-        st.write(f"- State: {st.session_state.env_q.state}")
-        st.write(f"- Start: {st.session_state.env_q.start}")
-        st.write(f"- Goal: {list(st.session_state.env_q.parking_spots)}")
-        if hasattr(st.session_state.env_q, 'goal_idx'):
-            st.write(f"- Goal Index: {st.session_state.env_q.goal_idx}")
-        st.write(f"- Prev Action: {st.session_state.env_q.prev_action}")
-        
-        st.write("**Double-Q:**")
-        st.write(f"- State: {st.session_state.env_dq.state}")
-        st.write(f"- Start: {st.session_state.env_dq.start}")
-        st.write(f"- Goal: {list(st.session_state.env_dq.parking_spots)}")
-        if hasattr(st.session_state.env_dq, 'goal_idx'):
-            st.write(f"- Goal Index: {st.session_state.env_dq.goal_idx}")
-        st.write(f"- Prev Action: {st.session_state.env_dq.prev_action}")
-        
-        st.write("**Match Check:**")
-        states_match = st.session_state.env_q.state == st.session_state.env_dq.state
-        starts_match = st.session_state.env_q.start == st.session_state.env_dq.start
-        goals_match = st.session_state.env_q.parking_spots == st.session_state.env_dq.parking_spots
-        
-        if states_match and starts_match and goals_match:
-            st.success("✅ All match!")
-        else:
-            st.error("❌ Mismatch detected!")
-
 st.sidebar.markdown("### 🗺️ Object Legend")
 
 if 'display_color_legend_python' in globals():
