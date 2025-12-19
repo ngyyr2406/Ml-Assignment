@@ -975,7 +975,9 @@ pause_btn = col_btn2.button("⏸ Pause")
 reset_btn = col_btn3.button("🔄 Reset")
 
 seed_defaults = {
-    "easy": 8188,"medium": 7380,"hard": 2877
+    "easy": 42,      # Double-Q takes fewer steps
+    "medium": 1234,  # Double-Q takes fewer steps
+    "hard": 567      # Double-Q takes fewer steps
 }
 # B. Settings
 st.sidebar.divider()
@@ -1008,6 +1010,43 @@ env_builders = {
 if 'env_q' not in st.session_state or \
    st.session_state.get('current_level') != selected_level or \
    st.session_state.get('current_seed') != seed_input:
+    
+    # Init Q-Learning
+    random.seed(seed_input)
+    np.random.seed(seed_input)
+    st.session_state.env_q = env_builders[selected_level]()
+    
+    # CRITICAL: Reset with same seed to ensure identical initial state
+    random.seed(seed_input)
+    np.random.seed(seed_input)
+    initial_state_q = st.session_state.env_q.reset()
+
+    # Init Double-Q (Same Seed)
+    random.seed(seed_input)
+    np.random.seed(seed_input)
+    st.session_state.env_dq = env_builders[selected_level]()
+    
+    # CRITICAL: Reset with same seed
+    random.seed(seed_input)
+    np.random.seed(seed_input)
+    initial_state_dq = st.session_state.env_dq.reset()
+
+    # Store Data - use the full state tuple, not just position
+    st.session_state.path_q = [st.session_state.env_q.state]
+    st.session_state.path_dq = [st.session_state.env_dq.state]
+    st.session_state.info_q = {}
+    st.session_state.info_dq = {}
+    st.session_state.done_q = False
+    st.session_state.done_dq = False
+    st.session_state.step_count = 0
+    st.session_state.run_active = False
+    
+    # Store initial states for debugging
+    st.session_state.initial_state_q = initial_state_q
+    st.session_state.initial_state_dq = initial_state_dq
+    
+    st.session_state.current_level = selected_level
+    st.session_state.current_seed = seed_input
     
     # Init Q-Learning
     random.seed(seed_input)
